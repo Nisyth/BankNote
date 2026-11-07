@@ -6,7 +6,7 @@ Record your expenses, organize your budget, visualize your habits.
 All your data stays **on your phone**: no account, no server, no internet connection required.
 
 <p align="center">
-  <img src="Screenshots/1.png"
+  <img src="screenshots/1.png"
        width="250"
        alt="Welcome Screen" />
 
@@ -18,7 +18,7 @@ All your data stays **on your phone**: no account, no server, no internet connec
 * Edit an expense by tapping it, delete it by swiping left (with the option to undo).
 
 <p align="center">
-  <img src="Screenshots/2.png"
+  <img src="screenshots/2.png"
        width="250"
        alt="Add Expense" />
 
@@ -47,7 +47,7 @@ All your data stays **on your phone**: no account, no server, no internet connec
 * Monthly average spending, by year and by category.
 
 <p align="center">
-  <img src="Screenshots/3.png"
+  <img src="screenshots/3.png"
        width="250"
        alt="Graphs" />
 
@@ -81,7 +81,7 @@ The app follows the phone's language: **French** or **English** (English by defa
 2. Entering your categories.
 
 <p align="center">
-  <img src="Screenshots/4.png"
+  <img src="screenshots/4.png"
        width="250"
        alt="Enter Categories" />
 	   
@@ -90,7 +90,7 @@ The app follows the phone's language: **French** or **English** (English by defa
 
 
 <p align="center">
-  <img src="Screenshots/5.png"
+  <img src="screenshots/5.png"
        width="250"
        alt="Allow access to files" />
 	   
