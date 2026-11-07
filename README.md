@@ -5,12 +5,22 @@ Record your expenses, organize your budget, visualize your habits.
 
 All your data stays **on your phone**: no account, no server, no internet connection required.
 
+<p align="center">
+  <img src="screenshots/1.png"
+       width="250"
+       alt="Welcome Screen" />
+
 ## Features
 
 ### Recording expenses
 
 * Quick entry of an expense: amount, category, date and an optional note.
 * Edit an expense by tapping it, delete it by swiping left (with the option to undo).
+
+<p align="center">
+  <img src="screenshots/2.png"
+       width="250"
+       alt="Add Expense" />
 
 ### Fully customizable categories
 
@@ -35,6 +45,11 @@ All your data stays **on your phone**: no account, no server, no internet connec
 
 * Expense breakdown by category (donut chart), for a chosen year and for your whole history.
 * Monthly average spending, by year and by category.
+
+<p align="center">
+  <img src="screenshots/3.png"
+       width="250"
+       alt="Graphs" />
 
 ### Settings
 
@@ -64,8 +79,23 @@ The app follows the phone's language: **French** or **English** (English by defa
 
 1. Welcome pop-up.
 2. Entering your categories.
+
+<p align="center">
+  <img src="screenshots/4.png"
+       width="250"
+       alt="Enter Categories" />
+	   
+	   
 3. Write permission request for the automatic backup (access to files, or manually choosing a folder, without this permission).
 
+
+<p align="center">
+  <img src="screenshots/5.png"
+       width="250"
+       alt="Allow access to files" />
+	   
+	   
+	   
 ## Installation and build
 
 Requirements: [Flutter](https://docs.flutter.dev/get-started/install) and the Android SDK.
@@ -81,8 +111,8 @@ flutter build apk --release # build the APK
 ## Technical details
 
 * **Flutter / Dart**, Material 3 interface.
-* **SQLite** (`sqflite`) for expenses, `shared\_preferences` for settings.
-* `local\_auth` (biometric lock), `file\_picker` (import / export), `intl` (languages, dates, amounts).
+* **SQLite** (`sqflite`) for expenses, `shared\\\_preferences` for settings.
+* `local\\\_auth` (biometric lock), `file\\\_picker` (import / export), `intl` (languages, dates, amounts).
 * Hand-drawn charts, with no external dependency.
 * Automatic backup through a small native Android bridge (Kotlin).
 * Personal version and public version built from the same codebase.
@@ -96,6 +126,9 @@ No data is sent online. Expenses are stored in the app's local database, and CSV
 BankNote started as a replacement for a daily expenses Excel file, then became a mainstream app.
 
 
+
 Support my work !
+
+
 bc1qpr2044vrd49tr59nxrtutvxxp0t3p5t402pv25
 
