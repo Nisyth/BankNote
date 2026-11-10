@@ -284,6 +284,51 @@ const _tr = <String, List<String>>{
   'new_short': ['Nouvelle', 'New'],
   'save': ['Enregistrer', 'Save'],
   'note_optional': ['Note (facultatif)', 'Note (optional)'],
+
+  // --- Entrées d'argent et budget du mois ---
+  'salary_banner': ['J’ai reçu mon salaire', 'I received my salary'],
+  'dismiss': ['Masquer', 'Hide'],
+  'remaining': ['Reste du mois', 'Left this month'],
+  'income_short': ['Entrée', 'Income'],
+  'expenses_label': ['Dépenses', 'Expenses'],
+  'income_label': ['Revenus', 'Income'],
+  'pct_spent': ['{pct} dépensé', '{pct} spent'],
+  'over_by': ['Dépassement de {amount}', 'Over by {amount}'],
+  'salary_deferred': [
+    'Salaire de {amount} reçu le {date}, compté pour {month}.',
+    'Salary of {amount} received on {date}, counted for {month}.',
+  ],
+  'movements_month': ['Mouvements du mois', 'Transactions this month'],
+  'salary': ['Salaire', 'Salary'],
+  'income': ['Entrée d’argent', 'Income'],
+  'salary_received': ['Salaire reçu', 'Salary received'],
+  'new_income': ['Nouvelle entrée d’argent', 'New income'],
+  'edit_income': ['Modifier l’entrée', 'Edit income'],
+  'is_salary': ['C’est mon salaire du mois', 'This is my monthly salary'],
+  'when_count': [
+    'À partir de quand compter ce montant ?',
+    'When should this amount start counting?',
+  ],
+  'inc_now': ['Maintenant', 'Now'],
+  'inc_now_sub': [
+    'Compté pour {month} : toutes les dépenses de ce mois sont décomptées '
+        'dès maintenant.',
+    'Counted for {month}: all of this month’s expenses are deducted right '
+        'away.',
+  ],
+  'inc_next': ['Au 1er {month}', 'On {month} 1'],
+  'inc_next_sub': [
+    'Compté pour {month} : {cur} n’est pas modifié.',
+    'Counted for {month}: {cur} is left unchanged.',
+  ],
+  'delete_income_title': ['Supprimer cette entrée ?', 'Delete this income?'],
+  'income_deleted': ['Entrée supprimée', 'Income deleted'],
+  'remaining_short': ['Reste {amount}', 'Left {amount}'],
+  'imp_inc.one': ['{n} entrée d’argent importée', '{n} income entry imported'],
+  'imp_inc.other': [
+    '{n} entrées d’argent importées',
+    '{n} income entries imported',
+  ],
 };
 
 String tr(String key, [Map<String, Object> args = const {}]) {
@@ -346,6 +391,11 @@ NumberFormat get moneyShort {
 
 String _dateKey(DateTime d) => DateFormat('yyyy-MM-dd').format(d);
 
+String _monthKey(DateTime d) => DateFormat('yyyy-MM').format(d);
+
+/// Nom du mois dans la langue de l'appli (en minuscules en français).
+String monthWord(DateTime m) => DateFormat('MMMM', appLang).format(m);
+
 String _cap(String s) => s.isEmpty ? s : s[0].toUpperCase() + s.substring(1);
 
 String _norm(String s) {
@@ -360,6 +410,9 @@ String _norm(String s) {
 
 String _expenseKey(Expense e) =>
     '${_dateKey(e.date)}|${e.amount.toStringAsFixed(2)}|${_norm(e.category)}|${e.note.trim()}';
+
+String _incomeKey(Income i) =>
+    '${_dateKey(i.date)}|${i.amount.toStringAsFixed(2)}|${i.isSalary}|${_monthKey(i.month)}|${i.note.trim()}';
 
 int _monthSpan(DateTime first, DateTime last) =>
     math.max(1, (last.year - first.year) * 12 + last.month - first.month + 1);
@@ -446,13 +499,61 @@ class Expense {
       );
 }
 
+/// Entrée d'argent (salaire ou rentrée ponctuelle).
+/// [date] = jour de réception ; [month] = mois auquel l'argent est rattaché
+/// (1er jour du mois). Les deux peuvent différer : un salaire reçu le 28
+/// novembre peut compter pour décembre.
+class Income {
+  final int? id;
+  final DateTime date;
+  final double amount;
+  final String note;
+  final bool isSalary;
+  final DateTime month;
+
+  const Income({
+    this.id,
+    required this.date,
+    required this.amount,
+    this.note = '',
+    this.isSalary = false,
+    required this.month,
+  });
+
+  Map<String, Object?> toMap() => {
+        'id': id,
+        'date': _dateKey(date),
+        'amount': amount,
+        'note': note,
+        'budget_month': _monthKey(month),
+        'is_salary': isSalary ? 1 : 0,
+      };
+
+  factory Income.fromMap(Map<String, Object?> m) {
+    final d = DateTime.parse(m['date'] as String);
+    final bm = DateTime.tryParse('${m['budget_month']}-01') ??
+        DateTime(d.year, d.month);
+    return Income(
+      id: m['id'] as int?,
+      date: d,
+      amount: (m['amount'] as num).toDouble(),
+      note: (m['note'] as String?) ?? '',
+      isSalary: ((m['is_salary'] as int?) ?? 0) == 1,
+      month: DateTime(bm.year, bm.month),
+    );
+  }
+}
+
 class Db {
   static Database? _db;
 
   static Future<Database> get instance async {
     return _db ??= await openDatabase(
       p.join(await getDatabasesPath(), 'depenses.db'),
-      version: 1,
+      version: 2,
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 2) await _createIncomes(db);
+      },
       onCreate: (db, version) async {
         await db.execute(
           'CREATE TABLE expenses('
@@ -463,8 +564,56 @@ class Db {
           "note TEXT NOT NULL DEFAULT '')",
         );
         await db.execute('CREATE INDEX idx_expenses_date ON expenses(date)');
+        await _createIncomes(db);
       },
     );
+  }
+
+  /// Table des entrées d'argent. budget_month (« yyyy-MM ») est le mois de
+  /// rattachement, distinct de la date de réception.
+  static Future<void> _createIncomes(Database db) async {
+    await db.execute(
+      'CREATE TABLE incomes('
+      'id INTEGER PRIMARY KEY AUTOINCREMENT, '
+      'date TEXT NOT NULL, '
+      'amount REAL NOT NULL, '
+      "note TEXT NOT NULL DEFAULT '', "
+      'budget_month TEXT NOT NULL, '
+      'is_salary INTEGER NOT NULL DEFAULT 0)',
+    );
+    await db.execute(
+        'CREATE INDEX idx_incomes_month ON incomes(budget_month)');
+  }
+
+  static Future<List<Income>> allIncomes() async {
+    final db = await instance;
+    final rows = await db.query('incomes', orderBy: 'date DESC, id DESC');
+    return rows.map(Income.fromMap).toList();
+  }
+
+  static Future<void> insertIncome(Income i) async {
+    final db = await instance;
+    await db.insert('incomes', i.toMap());
+  }
+
+  static Future<void> insertManyIncomes(List<Income> list) async {
+    final db = await instance;
+    final batch = db.batch();
+    for (final i in list) {
+      batch.insert('incomes', i.toMap());
+    }
+    await batch.commit(noResult: true);
+  }
+
+  static Future<void> updateIncome(Income i) async {
+    final db = await instance;
+    final m = i.toMap()..remove('id');
+    await db.update('incomes', m, where: 'id = ?', whereArgs: [i.id]);
+  }
+
+  static Future<void> deleteIncome(int id) async {
+    final db = await instance;
+    await db.delete('incomes', where: 'id = ?', whereArgs: [id]);
   }
 
   static Future<List<Expense>> all() async {
@@ -512,8 +661,10 @@ class Db {
 
 class ParsedImport {
   final List<Expense> expenses;
+  final List<Income> incomes;
   final int invalid;
-  const ParsedImport(this.expenses, this.invalid);
+  const ParsedImport(this.expenses, this.invalid,
+      [this.incomes = const <Income>[]]);
 }
 
 String decodeBytes(Uint8List bytes) {
@@ -603,18 +754,23 @@ ParsedImport parseImport(Uint8List bytes) {
       header, ['montant', 'amount', 'prix', 'somme', 'depense', 'total']);
   var catIdx = 2;
   var noteIdx = 3;
+  var natureIdx = -1;
+  var monthIdx = -1;
   var start = 0;
   if (dateIdx >= 0 && amountIdx >= 0) {
     start = 1;
     catIdx = _findColumn(header, ['categor', 'type', 'poste']);
     noteIdx = _findColumn(header,
         ['note', 'libelle', 'description', 'commentaire', 'detail', 'label']);
+    natureIdx = _findColumn(header, ['nature']);
+    monthIdx = _findColumn(header, ['mois_budget']);
   } else {
     dateIdx = 0;
     amountIdx = 1;
   }
 
   final out = <Expense>[];
+  final incomes = <Income>[];
   var invalid = 0;
   for (var i = start; i < rows.length; i++) {
     final r = rows[i];
@@ -625,6 +781,29 @@ ParsedImport parseImport(Uint8List bytes) {
       invalid++;
       continue;
     }
+    // Lignes d'entrées d'argent (colonne « nature » : salaire / entree).
+    final nature = _norm(cell(natureIdx));
+    if (nature == 'salaire' || nature == 'entree') {
+      if (amount <= 0) {
+        invalid++;
+        continue;
+      }
+      var month = DateTime(date.year, date.month);
+      final mm = RegExp(r'^(\d{4})-(\d{1,2})$').firstMatch(cell(monthIdx));
+      if (mm != null) {
+        final y = int.parse(mm.group(1)!);
+        final mo = int.parse(mm.group(2)!);
+        if (mo >= 1 && mo <= 12) month = DateTime(y, mo);
+      }
+      incomes.add(Income(
+        date: date,
+        amount: amount,
+        note: cell(noteIdx),
+        isSalary: nature == 'salaire',
+        month: month,
+      ));
+      continue;
+    }
     final cat = cell(catIdx);
     out.add(Expense(
       date: date,
@@ -633,24 +812,35 @@ ParsedImport parseImport(Uint8List bytes) {
       note: cell(noteIdx),
     ));
   }
-  return ParsedImport(out, invalid);
+  return ParsedImport(out, invalid, incomes);
 }
 
 // ---------------------------------------------------------------------------
 // Export CSV et sauvegardes automatiques
 // ---------------------------------------------------------------------------
 
-String buildCsv(List<Expense> all) {
+String buildCsv(List<Expense> all, [List<Income> incomes = const []]) {
   String q(String s) => (s.contains(';') || s.contains('"') || s.contains('\n'))
       ? '"${s.replaceAll('"', '""')}"'
       : s;
   final list = [...all]..sort((a, b) => a.date.compareTo(b.date));
-  final sb = StringBuffer('\uFEFFdate;montant;categorie;note\n');
+  final sb =
+      StringBuffer('\uFEFFdate;montant;categorie;note;nature;mois_budget\n');
   for (final e in list) {
     sb.write('${_dateKey(e.date)};'
         '${e.amount.toStringAsFixed(2).replaceAll('.', ',')};'
         '${q(e.category)};'
-        '${q(e.note)}\n');
+        '${q(e.note)};'
+        'depense;\n');
+  }
+  final incs = [...incomes]..sort((a, b) => a.date.compareTo(b.date));
+  for (final i in incs) {
+    sb.write('${_dateKey(i.date)};'
+        '${i.amount.toStringAsFixed(2).replaceAll('.', ',')};'
+        ';'
+        '${q(i.note)};'
+        '${i.isSalary ? 'salaire' : 'entree'};'
+        '${_monthKey(i.month)}\n');
   }
   return sb.toString();
 }
@@ -707,10 +897,11 @@ class Backup {
     return '${csv.length}:$h';
   }
 
-  static Future<BackupResult> run(List<Expense> all, {bool force = false}) async {
+  static Future<BackupResult> run(List<Expense> all, List<Income> incomes,
+      {bool force = false}) async {
     if (!Platform.isAndroid) return BackupResult.unsupported;
-    if (all.isEmpty) return BackupResult.empty;
-    final csv = buildCsv(all);
+    if (all.isEmpty && incomes.isEmpty) return BackupResult.empty;
+    final csv = buildCsv(all, incomes);
     final sig = _signature(csv);
     if (!force && sig == settings.lastBackupSig) return BackupResult.unchanged;
 
@@ -793,6 +984,7 @@ class AppSettings extends ChangeNotifier {
     if (s != null) seed = Color(s);
     mode = ThemeMode.values[(prefs.getInt('mode') ?? 0).clamp(0, 2).toInt()];
     lockEnabled = prefs.getBool('lock') ?? false;
+    dismissedBanners = prefs.getStringList('dismissedBanners') ?? [];
     autoBackup = prefs.getBool('autoBackup') ?? true;
     backupFiles = prefs.getStringList('backupFiles') ?? [];
     lastBackupSig = prefs.getString('backupSig');
@@ -816,6 +1008,19 @@ class AppSettings extends ChangeNotifier {
     }
     final lb = prefs.getString('lastBackup');
     lastBackup = lb == null ? null : DateTime.tryParse(lb);
+  }
+
+  // Mois pour lesquels la bannière « J'ai reçu mon salaire » a été masquée.
+  List<String> dismissedBanners = [];
+
+  bool isBannerDismissed(DateTime m) => dismissedBanners.contains(_monthKey(m));
+
+  Future<void> dismissBanner(DateTime m) async {
+    final k = _monthKey(m);
+    if (dismissedBanners.contains(k)) return;
+    dismissedBanners = [...dismissedBanners, k];
+    notifyListeners();
+    await _p?.setStringList('dismissedBanners', dismissedBanners);
   }
 
   Future<void> setWelcomeShown() async {
@@ -1403,6 +1608,7 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   List<Expense> _all = [];
+  List<Income> _incomes = [];
   bool _loading = true;
   int _tab = 0;
   DateTime _month = DateTime(DateTime.now().year, DateTime.now().month);
@@ -1491,7 +1697,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   Future<void> _autoBackup({bool force = false}) async {
-    final r = await Backup.run(_all, force: force);
+    final r = await Backup.run(_all, _incomes, force: force);
     if (!mounted) return;
     if (r == BackupResult.needsAccess) {
       await _askStorageAccess();
@@ -1539,9 +1745,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   Future<void> _reload() async {
     final data = await Db.all();
+    final incomes = await Db.allIncomes();
     if (!mounted) return;
     setState(() {
       _all = data;
+      _incomes = incomes;
       _loading = false;
     });
   }
@@ -1565,6 +1773,40 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   double _total(DateTime m) => _all
       .where((e) => e.date.year == m.year && e.date.month == m.month)
       .fold<double>(0, (s, e) => s + e.amount);
+
+  // Entrées d'argent comptées pour le mois [m] (mois de rattachement).
+  List<Income> _incomesFor(DateTime m) => _incomes
+      .where((i) => i.month.year == m.year && i.month.month == m.month)
+      .toList();
+
+  double _incomeTotal(DateTime m) =>
+      _incomesFor(m).fold<double>(0, (s, i) => s + i.amount);
+
+  /// Ouvre la feuille de saisie d'une entrée d'argent (nouvelle ou existante).
+  Future<void> _openIncomeSheet({Income? income, bool salary = false}) async {
+    final now = DateTime.now();
+    // Mois passé affiché : on propose le dernier jour de ce mois ; sinon
+    // la date du jour.
+    final isPast = DateTime(_month.year, _month.month)
+        .isBefore(DateTime(now.year, now.month));
+    final initial = isPast
+        ? DateTime(_month.year, _month.month + 1, 0)
+        : DateTime(now.year, now.month, now.day);
+    final month = await showModalBottomSheet<DateTime>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (_) => IncomeSheet(
+        income: income,
+        salaryDefault: salary,
+        initialDate: initial,
+      ),
+    );
+    if (month != null) {
+      _month = DateTime(month.year, month.month);
+      await _reload();
+    }
+  }
 
   String _monthLabel(DateTime m) =>
       toBeginningOfSentenceCase(DateFormat('MMMM yyyy', appLang).format(m))!;
@@ -1769,6 +2011,17 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       toInsert.add(x);
     }
     if (toInsert.isNotEmpty) await Db.insertMany(toInsert);
+    // Entrées d'argent du CSV (colonne « nature »), sans doublons.
+    final existingInc = _incomes.map(_incomeKey).toSet();
+    final incToInsert = <Income>[];
+    for (final inc in parsed.incomes) {
+      if (!existingInc.add(_incomeKey(inc))) {
+        duplicates++;
+        continue;
+      }
+      incToInsert.add(inc);
+    }
+    if (incToInsert.isNotEmpty) await Db.insertManyIncomes(incToInsert);
     // Les catégories inconnues du CSV rejoignent la liste de l'utilisateur.
     final catsBefore = settings.categories.length;
     await settings.addCategories(toInsert.map((e) => e.category));
@@ -1782,6 +2035,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         title: Text(title),
         content: Text([
           trn('imp_done', toInsert.length),
+          if (incToInsert.isNotEmpty) trn('imp_inc', incToInsert.length),
           trn('imp_dup', duplicates),
           trn('imp_bad', parsed.invalid),
           if (addedCats > 0) trn('imp_cats', addedCats),
@@ -1797,11 +2051,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   Future<void> _export() async {
-    if (_all.isEmpty) {
+    if (_all.isEmpty && _incomes.isEmpty) {
       _snack(tr('none_to_export'));
       return;
     }
-    final bytes = Uint8List.fromList(utf8.encode(buildCsv(_all)));
+    final bytes = Uint8List.fromList(utf8.encode(buildCsv(_all, _incomes)));
     final name =
         'depenses_${DateFormat('yyyyMMdd').format(DateTime.now())}.csv';
     final path = await FilePicker.saveFile(
@@ -2047,6 +2301,18 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     final prev = _total(DateTime(_month.year, _month.month - 1));
     final diff = total - prev;
 
+    // Entrées d'argent comptées pour ce mois, et salaire éventuellement reçu
+    // ce mois-ci mais compté pour un autre mois.
+    final monthIncomes = _incomesFor(_month)
+      ..sort((a, b) => b.date.compareTo(a.date));
+    final deferredSalary = _incomes
+        .where((i) =>
+            i.isSalary &&
+            i.date.year == _month.year &&
+            i.date.month == _month.month &&
+            !(i.month.year == _month.year && i.month.month == _month.month))
+        .firstOrNull;
+
     // Toutes les catégories de l'utilisateur, même sans dépense ce mois-ci.
     final cats = _categories;
     final byCat = <String, double>{for (final c in cats) c: 0.0};
@@ -2087,24 +2353,12 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
       children: [
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(tr('month_total'), style: textTheme.labelLarge),
-                Text(
-                  money.format(total),
-                  style: textTheme.headlineLarge
-                      ?.copyWith(fontWeight: FontWeight.bold),
-                ),
-                Text(trn('expenses_count', items.length),
-                    style: textTheme.bodyMedium),
-                comparison,
-              ],
-            ),
-          ),
+        _budgetCard(
+          total: total,
+          count: items.length,
+          comparison: comparison,
+          incomes: monthIncomes,
+          deferred: deferredSalary,
         ),
         const SizedBox(height: 16),
         Text(tr('by_category'), style: textTheme.titleMedium),
@@ -2121,7 +2375,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             Expanded(
               child: Text(
                 filter == null
-                    ? tr('expenses_month')
+                    ? (monthIncomes.isEmpty
+                        ? tr('expenses_month')
+                        : tr('movements_month'))
                     : tr('expenses_filtered', {'cat': filter}),
                 style: textTheme.titleMedium,
                 overflow: TextOverflow.ellipsis,
@@ -2135,7 +2391,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               ),
           ],
         ),
-        if (shown.isEmpty)
+        if (shown.isEmpty && (filter != null || monthIncomes.isEmpty))
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 16),
             child: Text(
@@ -2144,8 +2400,268 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   : tr('none_month_cat', {'cat': filter}),
             ),
           ),
+        if (filter == null)
+          for (final i in monthIncomes) _incomeTile(i),
         for (final e in shown) _expenseTile(e),
       ],
+    );
+  }
+
+  // Bannière « J'ai reçu mon salaire » : mois en cours uniquement, masquée
+  // dès qu'un salaire a été reçu dans le mois (même compté pour le suivant)
+  // ou si l'utilisateur l'a fermée pour ce mois.
+  Widget _salaryBanner() {
+    if (_loading) return const SizedBox.shrink();
+    final now = DateTime.now();
+    if (_month.year != now.year || _month.month != now.month) {
+      return const SizedBox.shrink();
+    }
+    final received = _incomes.any((i) =>
+        i.isSalary && i.date.year == _month.year && i.date.month == _month.month);
+    if (received || settings.isBannerDismissed(_month)) {
+      return const SizedBox.shrink();
+    }
+    final cs = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+      child: Material(
+        color: cs.secondaryContainer,
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: () => _openIncomeSheet(salary: true),
+          child: SizedBox(
+            height: 52,
+            child: Padding(
+              padding: const EdgeInsets.only(left: 14, right: 4),
+              child: Row(
+                children: [
+                  Icon(Icons.payments_outlined, color: cs.onSecondaryContainer),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      tr('salary_banner'),
+                      style: TextStyle(
+                        color: cs.onSecondaryContainer,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    icon: Icon(Icons.close,
+                        size: 20, color: cs.onSecondaryContainer),
+                    tooltip: tr('dismiss'),
+                    onPressed: () async {
+                      await settings.dismissBanner(_month);
+                      if (mounted) setState(() {});
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // Carte du haut du Résumé : « Reste du mois » si le mois a des revenus,
+  // sinon le total des dépenses comme avant.
+  Widget _budgetCard({
+    required double total,
+    required int count,
+    required Widget comparison,
+    required List<Income> incomes,
+    Income? deferred,
+  }) {
+    final textTheme = Theme.of(context).textTheme;
+    final cs = Theme.of(context).colorScheme;
+    final hasIncome = incomes.isNotEmpty;
+    final incomeTotal = incomes.fold<double>(0, (s, i) => s + i.amount);
+    final remaining = incomeTotal - total;
+    final over = remaining < 0;
+    final tone = over ? Colors.red.shade400 : Colors.green.shade500;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (hasIncome) ...[
+              // Dépenses (gauche) et revenus (droite) en gros, en haut.
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(tr('expenses_label'),
+                            style: textTheme.labelLarge),
+                        FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text(
+                            money.format(total),
+                            style: textTheme.headlineMedium
+                                ?.copyWith(fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(tr('income_label'), style: textTheme.labelLarge),
+                        FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text(
+                            money.format(incomeTotal),
+                            style: textTheme.headlineMedium?.copyWith(
+                              fontWeight: FontWeight.bold,
+                              color: Colors.green.shade500,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: LinearProgressIndicator(
+                  value: (total / incomeTotal).clamp(0.0, 1.0).toDouble(),
+                  minHeight: 8,
+                  color: over ? tone : null,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                tr('pct_spent', {'pct': pctStr(total / incomeTotal)}),
+                style: textTheme.bodyMedium,
+              ),
+              const SizedBox(height: 12),
+              // Reste du mois : à la place de l'ancienne ligne « Revenus · Dépenses ».
+              Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(tr('remaining'), style: textTheme.labelLarge),
+                        Text(
+                          money.format(remaining),
+                          style: textTheme.headlineSmall?.copyWith(
+                              fontWeight: FontWeight.bold, color: tone),
+                        ),
+                        if (over)
+                          Text(
+                            tr('over_by', {'amount': money.format(-remaining)}),
+                            style: textTheme.bodyMedium?.copyWith(color: tone),
+                          ),
+                      ],
+                    ),
+                  ),
+                  FilledButton.tonalIcon(
+                    style: FilledButton.styleFrom(
+                        visualDensity: VisualDensity.compact),
+                    onPressed: () => _openIncomeSheet(),
+                    icon: const Icon(Icons.add, size: 18),
+                    label: Text(tr('income_short')),
+                  ),
+                ],
+              ),
+            ] else ...[
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(tr('month_total'),
+                        style: textTheme.labelLarge),
+                  ),
+                  FilledButton.tonalIcon(
+                    style: FilledButton.styleFrom(
+                        visualDensity: VisualDensity.compact),
+                    onPressed: () => _openIncomeSheet(),
+                    icon: const Icon(Icons.add, size: 18),
+                    label: Text(tr('income_short')),
+                  ),
+                ],
+              ),
+              Text(
+                money.format(total),
+                style: textTheme.headlineLarge
+                    ?.copyWith(fontWeight: FontWeight.bold),
+              ),
+              Text(trn('expenses_count', count), style: textTheme.bodyMedium),
+            ],
+            comparison,
+            if (deferred != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text(
+                  tr('salary_deferred', {
+                    'amount': money.format(deferred.amount),
+                    'date': DateFormat('d MMM', appLang).format(deferred.date),
+                    'month': monthWord(deferred.month),
+                  }),
+                  style: textTheme.bodySmall?.copyWith(color: cs.primary),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // Une entrée d'argent : touche pour modifier, glisse vers la gauche pour
+  // supprimer (comme une dépense).
+  Widget _incomeTile(Income i) {
+    final green = Colors.green.shade600;
+    final kind = i.isSalary ? tr('salary') : tr('income');
+    return Dismissible(
+      key: ValueKey('income-${i.id}'),
+      direction: DismissDirection.endToStart,
+      background: Container(
+        color: Colors.red,
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.only(right: 20),
+        child: const Icon(Icons.delete, color: Colors.white),
+      ),
+      onDismissed: (_) async {
+        setState(() => _incomes.removeWhere((x) => x.id == i.id));
+        await Db.deleteIncome(i.id!);
+        if (!mounted) return;
+        ScaffoldMessenger.of(context)
+          ..clearSnackBars()
+          ..showSnackBar(SnackBar(
+            content: Text(tr('income_deleted')),
+            action: SnackBarAction(
+              label: tr('undo'),
+              onPressed: () async {
+                await Db.insertIncome(i);
+                await _reload();
+              },
+            ),
+          ));
+      },
+      child: ListTile(
+        contentPadding: EdgeInsets.zero,
+        leading: CircleAvatar(
+          backgroundColor: Colors.green.withAlpha(40),
+          child: Icon(Icons.add, color: green),
+        ),
+        title: Text(i.note.isEmpty ? kind : i.note),
+        subtitle: Text('${DateFormat('EEE d MMM', appLang).format(i.date)} · $kind'),
+        trailing: Text(
+          '+${money.format(i.amount)}',
+          style: TextStyle(fontWeight: FontWeight.w600, color: green),
+        ),
+        onTap: () => _openIncomeSheet(income: i),
+      ),
     );
   }
 
@@ -2467,6 +2983,19 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             contentPadding: EdgeInsets.zero,
             selected: i == _month.month - 1,
             title: Text(_monthLabel(yearMonths[i])),
+            subtitle: _incomeTotal(yearMonths[i]) > 0
+                ? Text(
+                    tr('remaining_short', {
+                      'amount': money
+                          .format(_incomeTotal(yearMonths[i]) - yearTotals[i]),
+                    }),
+                    style: TextStyle(
+                      color: _incomeTotal(yearMonths[i]) - yearTotals[i] < 0
+                          ? Colors.red.shade400
+                          : Colors.green.shade500,
+                    ),
+                  )
+                : null,
             trailing: Text(
               money.format(yearTotals[i]),
               style: const TextStyle(fontWeight: FontWeight.w600),
@@ -2669,6 +3198,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           ? Column(
               children: [
                 _monthBar(),
+                _salaryBanner(),
                 Expanded(child: _summaryPage()),
               ],
             )
@@ -2920,6 +3450,284 @@ class _EditPageState extends State<EditPage> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Feuille de saisie : salaire / entrée d'argent
+// ---------------------------------------------------------------------------
+
+/// Saisie d'une entrée d'argent. L'utilisateur choisit toujours lui-même si
+/// le montant compte « maintenant » (mois de la date de réception) ou « au
+/// 1er du mois suivant » : aucune option n'est cochée d'office à la création.
+/// Renvoie le mois de rattachement enregistré (ou null si annulé).
+class IncomeSheet extends StatefulWidget {
+  final Income? income;
+  final bool salaryDefault;
+  final DateTime initialDate;
+
+  const IncomeSheet({
+    super.key,
+    this.income,
+    required this.salaryDefault,
+    required this.initialDate,
+  });
+
+  @override
+  State<IncomeSheet> createState() => _IncomeSheetState();
+}
+
+class _IncomeSheetState extends State<IncomeSheet> {
+  late final TextEditingController _amountCtl;
+  late final TextEditingController _noteCtl;
+  late DateTime _date;
+  late bool _isSalary;
+  int? _choice; // 0 = maintenant (mois de la date), 1 = 1er du mois suivant
+  String? _error;
+
+  bool get _editing => widget.income != null;
+
+  @override
+  void initState() {
+    super.initState();
+    final i = widget.income;
+    _date = i?.date ?? widget.initialDate;
+    _isSalary = i?.isSalary ?? widget.salaryDefault;
+    if (i != null) {
+      if (i.month == DateTime(_date.year, _date.month)) {
+        _choice = 0;
+      } else if (i.month == DateTime(_date.year, _date.month + 1)) {
+        _choice = 1;
+      }
+    }
+    var amountText = '';
+    if (i != null) {
+      amountText = i.amount == i.amount.roundToDouble()
+          ? i.amount.toStringAsFixed(0)
+          : i.amount.toStringAsFixed(2);
+      amountText = amountText.replaceAll('.', ',');
+    }
+    _amountCtl = TextEditingController(text: amountText);
+    _noteCtl = TextEditingController(text: i?.note ?? '');
+  }
+
+  @override
+  void dispose() {
+    _amountCtl.dispose();
+    _noteCtl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pickDate() async {
+    final d = await showDatePicker(
+      context: context,
+      initialDate: _date,
+      firstDate: DateTime(2000),
+      lastDate: DateTime(DateTime.now().year + 1, 12, 31),
+    );
+    if (d != null) setState(() => _date = d);
+  }
+
+  Future<void> _save() async {
+    final amount = parseAmount(_amountCtl.text);
+    if (amount == null || amount <= 0) {
+      setState(() => _error = tr('amount_invalid'));
+      return;
+    }
+    final choice = _choice;
+    if (choice == null) return;
+    final month = DateTime(_date.year, _date.month + choice);
+    final inc = Income(
+      id: widget.income?.id,
+      date: _date,
+      amount: amount,
+      note: _noteCtl.text.trim(),
+      isSalary: _isSalary,
+      month: month,
+    );
+    if (_editing) {
+      await Db.updateIncome(inc);
+    } else {
+      await Db.insertIncome(inc);
+    }
+    if (!mounted) return;
+    Navigator.pop(context, month);
+  }
+
+  Future<void> _delete() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(tr('delete_income_title')),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(tr('cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(tr('delete')),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    await Db.deleteIncome(widget.income!.id!);
+    if (!mounted) return;
+    Navigator.pop(context, widget.income!.month);
+  }
+
+  Widget _choiceCard({
+    required int value,
+    required String title,
+    required String subtitle,
+  }) {
+    final cs = Theme.of(context).colorScheme;
+    final tt = Theme.of(context).textTheme;
+    final selected = _choice == value;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Material(
+        color: selected ? cs.secondaryContainer : Colors.transparent,
+        clipBehavior: Clip.antiAlias,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: BorderSide(
+            color: selected ? cs.primary : cs.outlineVariant,
+            width: selected ? 2 : 1,
+          ),
+        ),
+        child: InkWell(
+          onTap: () => setState(() => _choice = value),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  selected
+                      ? Icons.radio_button_checked
+                      : Icons.radio_button_unchecked,
+                  color: selected ? cs.primary : cs.onSurfaceVariant,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: tt.titleMedium
+                            ?.copyWith(fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(subtitle, style: tt.bodySmall),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tt = Theme.of(context).textTheme;
+    final bottom = MediaQuery.of(context).viewInsets.bottom;
+    final cur = DateTime(_date.year, _date.month);
+    final next = DateTime(_date.year, _date.month + 1);
+    final title = _editing
+        ? tr('edit_income')
+        : (_isSalary ? tr('salary_received') : tr('new_income'));
+    return SafeArea(
+      child: SingleChildScrollView(
+        padding: EdgeInsets.fromLTRB(16, 0, 16, 16 + bottom),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Expanded(child: Text(title, style: tt.titleLarge)),
+                if (_editing)
+                  IconButton(
+                    icon: const Icon(Icons.delete_outline),
+                    tooltip: tr('delete'),
+                    onPressed: _delete,
+                  ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _amountCtl,
+              autofocus: !_editing,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              textInputAction: TextInputAction.done,
+              style: tt.headlineSmall,
+              decoration: InputDecoration(
+                labelText: tr('amount'),
+                suffixText: '€',
+                errorText: _error,
+                border: const OutlineInputBorder(),
+              ),
+              onChanged: (_) {
+                if (_error != null) setState(() => _error = null);
+              },
+            ),
+            const SizedBox(height: 8),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.calendar_today),
+              title: Text(
+                toBeginningOfSentenceCase(
+                    DateFormat('EEEE d MMMM yyyy', appLang).format(_date))!,
+              ),
+              onTap: _pickDate,
+            ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(tr('is_salary')),
+              value: _isSalary,
+              onChanged: (v) => setState(() => _isSalary = v),
+            ),
+            const SizedBox(height: 8),
+            Text(tr('when_count'), style: tt.titleSmall),
+            const SizedBox(height: 8),
+            _choiceCard(
+              value: 0,
+              title: tr('inc_now'),
+              subtitle: tr('inc_now_sub', {'month': monthWord(cur)}),
+            ),
+            _choiceCard(
+              value: 1,
+              title: tr('inc_next', {'month': monthWord(next)}),
+              subtitle: tr('inc_next_sub', {
+                'month': monthWord(next),
+                'cur': _cap(monthWord(cur)),
+              }),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _noteCtl,
+              textCapitalization: TextCapitalization.sentences,
+              decoration: InputDecoration(
+                labelText: tr('note_optional'),
+                border: const OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 16),
+            FilledButton.icon(
+              onPressed: _choice == null ? null : _save,
+              icon: const Icon(Icons.check),
+              label: Text(tr('save')),
+            ),
+          ],
+        ),
       ),
     );
   }
