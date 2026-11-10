@@ -229,6 +229,8 @@ const _tr = <String, List<String>>{
   'light': ['Clair', 'Light'],
   'dark': ['Sombre', 'Dark'],
   'categories': ['Catégories', 'Categories'],
+  'cats_count.one': ['{n} catégorie', '{n} category'],
+  'cats_count.other': ['{n} catégories', '{n} categories'],
   'add_category': ['Ajouter une catégorie', 'Add a category'],
   'security': ['Sécurité', 'Security'],
   'fp_lock': ['Verrouillage par empreinte', 'Fingerprint lock'],
@@ -3109,12 +3111,29 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               ),
             ),
             const Divider(),
-            _sectionTitle(tr('categories')),
-            for (final c in settings.categories) _categoryTile(c),
-            ListTile(
-              leading: const Icon(Icons.add),
-              title: Text(tr('add_category')),
-              onTap: _addCategory,
+            // Catégories : section dépliable, repliée par défaut, pour ne pas
+            // repousser les autres réglages quand il y en a beaucoup.
+            ExpansionTile(
+              key: const PageStorageKey('settings-categories'),
+              initiallyExpanded: false,
+              shape: const Border(),
+              collapsedShape: const Border(),
+              tilePadding: const EdgeInsets.symmetric(horizontal: 16),
+              childrenPadding: EdgeInsets.zero,
+              title: Text(
+                tr('categories'),
+                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                    color: Theme.of(context).colorScheme.primary),
+              ),
+              subtitle: Text(trn('cats_count', settings.categories.length)),
+              children: [
+                for (final c in settings.categories) _categoryTile(c),
+                ListTile(
+                  leading: const Icon(Icons.add),
+                  title: Text(tr('add_category')),
+                  onTap: _addCategory,
+                ),
+              ],
             ),
             const Divider(),
             _sectionTitle(tr('security')),
