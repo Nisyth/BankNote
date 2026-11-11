@@ -22,6 +22,25 @@ All your data stays **on your phone**: no account, no server, no internet connec
        width="250"
        alt="Add Expense" />
 
+
+
+### Income Entries
+
+A  + Income button on the Summary card lets you add your monthly salary or one-off income (refunds, gifts, etc.). Income entries appear at the top of the month's list: tap one to edit it, swipe left to delete it.
+
+* You choose when it counts: when entering an income, you pick one of two options:
+
+    Now: it counts for the month of the date received, and all that month's expenses are deducted from it right away.
+    On the 1st of next month: it counts for the following month and leaves the current month untouched. This is useful when your salary arrives before the end of the month (e.g. on the 28th).
+
+* No option is pre-selected, and the choice can be changed later by editing the entry.
+
+<p align="center">
+  <img src="screenshots/6.png"
+       width="250"
+       alt="Add Income" />
+
+
 ### Fully customizable categories
 
 * No imposed categories: on first launch, you choose your own (at least one).
