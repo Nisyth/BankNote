@@ -231,6 +231,77 @@ const _tr = <String, List<String>>{
   'categories': ['Catégories', 'Categories'],
   'cats_count.one': ['{n} catégorie', '{n} category'],
   'cats_count.other': ['{n} catégories', '{n} categories'],
+
+  // --- Dépenses régulières ---
+  'recurring_expenses': ['Dépenses régulières', 'Recurring expenses'],
+  'recurring_switch': ['Dépense régulière', 'Recurring expense'],
+  'recurring_switch_sub': [
+    'Comptée automatiquement chaque mois',
+    'Counted automatically every month',
+  ],
+  'recurring_day': ['Jour du mois', 'Day of the month'],
+  'recurring_short_month': [
+    'Les mois plus courts, elle est comptée le dernier jour du mois.',
+    'In shorter months, it is counted on the last day of the month.',
+  ],
+  'recurring_from': ['À partir de {month}', 'From {month}'],
+  'recurring_edit_info': [
+    'Modification appliquée à partir de {month}. Les mois précédents ne '
+        'changent pas.',
+    'Changes apply from {month} on. Earlier months are not changed.',
+  ],
+  'recurring_every_month': ['Chaque mois', 'Every month'],
+  'delete_recurring_title': [
+    'Supprimer cette dépense régulière ?',
+    'Delete this recurring expense?',
+  ],
+  'stop_from': ['Arrêter à partir de {month}', 'Stop from {month}'],
+  'stop_from_sub': [
+    'Les mois précédents sont conservés',
+    'Earlier months are kept',
+  ],
+  'delete_everywhere': ['Supprimer de tous les mois', 'Delete from all months'],
+  'delete_everywhere_sub': [
+    'Y compris les mois précédents',
+    'Including earlier months',
+  ],
+  'recurring_deleted': [
+    'Dépense régulière supprimée',
+    'Recurring expense deleted',
+  ],
+  'recurring_stopped': [
+    'Dépense régulière arrêtée',
+    'Recurring expense stopped',
+  ],
+  'imp_rec.one': [
+    '{n} dépense régulière importée',
+    '{n} recurring expense imported',
+  ],
+  'imp_rec.other': [
+    '{n} dépenses régulières importées',
+    '{n} recurring expenses imported',
+  ],
+  'similar_title': ['Dépenses déjà enregistrées', 'Already recorded'],
+  'similar_body.one': [
+    '{n} dépense « {name} » est déjà enregistrée sur ces mois. La dépense '
+        'régulière la compterait une seconde fois :',
+    '{n} “{name}” expense is already recorded for these months. The recurring '
+        'expense would count it a second time:',
+  ],
+  'similar_body.other': [
+    '{n} dépenses « {name} » sont déjà enregistrées sur ces mois. La dépense '
+        'régulière les compterait une seconde fois :',
+    '{n} “{name}” expenses are already recorded for these months. The '
+        'recurring expense would count them a second time:',
+  ],
+  'similar_hint': [
+    '« Remplacer » les supprime : chaque mois reprend le montant de la '
+        'dépense régulière ({amount}).',
+    '“Replace” deletes them: each month then uses the recurring amount '
+        '({amount}).',
+  ],
+  'similar_replace': ['Remplacer', 'Replace'],
+  'similar_keep': ['Garder les deux', 'Keep both'],
   'add_category': ['Ajouter une catégorie', 'Add a category'],
   'security': ['Sécurité', 'Security'],
   'fp_lock': ['Verrouillage par empreinte', 'Fingerprint lock'],
@@ -413,6 +484,9 @@ String _norm(String s) {
 String _expenseKey(Expense e) =>
     '${_dateKey(e.date)}|${e.amount.toStringAsFixed(2)}|${_norm(e.category)}|${e.note.trim()}';
 
+String _recurringKey(Recurring r) =>
+    '${r.amount.toStringAsFixed(2)}|${_norm(r.category)}|${r.note.trim()}|${r.day}|${_monthKey(r.start)}';
+
 String _incomeKey(Income i) =>
     '${_dateKey(i.date)}|${i.amount.toStringAsFixed(2)}|${i.isSalary}|${_monthKey(i.month)}|${i.note.trim()}';
 
@@ -476,12 +550,17 @@ class Expense {
   final String category;
   final String note;
 
+  /// Renseigné pour une occurrence d'une dépense régulière (générée à
+  /// l'affichage, jamais enregistrée comme ligne de la table expenses).
+  final int? recurringId;
+
   const Expense({
     this.id,
     required this.date,
     required this.amount,
     required this.category,
     this.note = '',
+    this.recurringId,
   });
 
   Map<String, Object?> toMap() => {
@@ -499,6 +578,97 @@ class Expense {
         category: m['category'] as String,
         note: (m['note'] as String?) ?? '',
       );
+}
+
+/// Dépense régulière : une seule ligne en base, dont les occurrences
+/// mensuelles sont générées à l'affichage, du mois [start] jusqu'au mois
+/// courant de la date système du téléphone (ou jusqu'à [end] si la série est
+/// arrêtée). Un mois futur n'a donc aucune occurrence tant qu'il n'est pas
+/// atteint. [day] = jour du mois choisi (31 → dernier jour des mois courts).
+class Recurring {
+  final int? id;
+  final double amount;
+  final String category;
+  final String note;
+  final int day;
+  final DateTime start; // 1er jour du premier mois
+  final DateTime? end; // 1er jour du dernier mois compté (inclus), ou null
+
+  const Recurring({
+    this.id,
+    required this.amount,
+    required this.category,
+    this.note = '',
+    required this.day,
+    required this.start,
+    this.end,
+  });
+
+  Recurring copyWith({
+    double? amount,
+    String? category,
+    String? note,
+    int? day,
+    DateTime? end,
+  }) =>
+      Recurring(
+        id: id,
+        amount: amount ?? this.amount,
+        category: category ?? this.category,
+        note: note ?? this.note,
+        day: day ?? this.day,
+        start: start,
+        end: end ?? this.end,
+      );
+
+  Map<String, Object?> toMap() => {
+        'id': id,
+        'amount': amount,
+        'category': category,
+        'note': note,
+        'day': day,
+        'start_month': _monthKey(start),
+        'end_month': end == null ? null : _monthKey(end!),
+      };
+
+  factory Recurring.fromMap(Map<String, Object?> m) {
+    DateTime? month(Object? v) {
+      final d = v == null ? null : DateTime.tryParse('$v-01');
+      return d == null ? null : DateTime(d.year, d.month);
+    }
+
+    final now = DateTime.now();
+    return Recurring(
+      id: m['id'] as int?,
+      amount: (m['amount'] as num).toDouble(),
+      category: m['category'] as String,
+      note: (m['note'] as String?) ?? '',
+      day: ((m['day'] as int?) ?? 1).clamp(1, 31).toInt(),
+      start: month(m['start_month']) ?? DateTime(now.year, now.month),
+      end: month(m['end_month']),
+    );
+  }
+
+  /// Occurrences du mois [start] jusqu'au mois [upTo] (inclus), sans jamais
+  /// dépasser [end].
+  List<Expense> occurrences(DateTime upTo) {
+    final out = <Expense>[];
+    final e = end;
+    final last = (e != null && e.isBefore(upTo)) ? e : upTo;
+    var m = DateTime(start.year, start.month);
+    while (!m.isAfter(last)) {
+      final daysInMonth = DateTime(m.year, m.month + 1, 0).day;
+      out.add(Expense(
+        date: DateTime(m.year, m.month, math.min(day, daysInMonth)),
+        amount: amount,
+        category: category,
+        note: note,
+        recurringId: id,
+      ));
+      m = DateTime(m.year, m.month + 1);
+    }
+    return out;
+  }
 }
 
 /// Entrée d'argent (salaire ou rentrée ponctuelle).
@@ -552,9 +722,10 @@ class Db {
   static Future<Database> get instance async {
     return _db ??= await openDatabase(
       p.join(await getDatabasesPath(), 'depenses.db'),
-      version: 2,
+      version: 3,
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) await _createIncomes(db);
+        if (oldVersion < 3) await _createRecurring(db);
       },
       onCreate: (db, version) async {
         await db.execute(
@@ -567,6 +738,7 @@ class Db {
         );
         await db.execute('CREATE INDEX idx_expenses_date ON expenses(date)');
         await _createIncomes(db);
+        await _createRecurring(db);
       },
     );
   }
@@ -585,6 +757,72 @@ class Db {
     );
     await db.execute(
         'CREATE INDEX idx_incomes_month ON incomes(budget_month)');
+  }
+
+  /// Table des dépenses régulières (une ligne par série). start_month et
+  /// end_month sont au format « yyyy-MM ».
+  static Future<void> _createRecurring(Database db) async {
+    await db.execute(
+      'CREATE TABLE recurring('
+      'id INTEGER PRIMARY KEY AUTOINCREMENT, '
+      'amount REAL NOT NULL, '
+      'category TEXT NOT NULL, '
+      "note TEXT NOT NULL DEFAULT '', "
+      'day INTEGER NOT NULL, '
+      'start_month TEXT NOT NULL, '
+      'end_month TEXT)',
+    );
+  }
+
+  static Future<List<Recurring>> allRecurring() async {
+    final db = await instance;
+    final rows = await db.query('recurring', orderBy: 'id');
+    return rows.map(Recurring.fromMap).toList();
+  }
+
+  static Future<void> insertRecurring(Recurring r) async {
+    final db = await instance;
+    await db.insert('recurring', r.toMap());
+  }
+
+  static Future<void> insertManyRecurring(List<Recurring> list) async {
+    final db = await instance;
+    final batch = db.batch();
+    for (final r in list) {
+      batch.insert('recurring', r.toMap());
+    }
+    await batch.commit(noResult: true);
+  }
+
+  static Future<void> updateRecurring(Recurring r) async {
+    final db = await instance;
+    final m = r.toMap()..remove('id');
+    await db.update('recurring', m, where: 'id = ?', whereArgs: [r.id]);
+  }
+
+  /// Remet une série telle qu'elle était (annulation d'une suppression).
+  static Future<void> restoreRecurring(Recurring r) async {
+    final db = await instance;
+    await db.insert('recurring', r.toMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  /// choice = 'all' : la série disparaît de tous les mois.
+  /// choice = 'stop' : elle s'arrête à partir de [month] (mois précédents
+  /// conservés) ; si [month] est son premier mois, elle est supprimée.
+  static Future<void> applyRecurringDelete(
+      Recurring r, DateTime month, String choice) async {
+    final db = await instance;
+    if (choice == 'all' || !month.isAfter(r.start)) {
+      await db.delete('recurring', where: 'id = ?', whereArgs: [r.id]);
+    } else {
+      await db.update(
+        'recurring',
+        {'end_month': _monthKey(DateTime(month.year, month.month - 1))},
+        where: 'id = ?',
+        whereArgs: [r.id],
+      );
+    }
   }
 
   static Future<List<Income>> allIncomes() async {
@@ -649,10 +887,45 @@ class Db {
     await db.delete('expenses', where: 'id = ?', whereArgs: [id]);
   }
 
+  static Future<void> deleteMany(List<int> ids) async {
+    final db = await instance;
+    final batch = db.batch();
+    for (final id in ids) {
+      batch.delete('expenses', where: 'id = ?', whereArgs: [id]);
+    }
+    await batch.commit(noResult: true);
+  }
+
+  /// Dépenses enregistrées de même catégorie et même note, entre les mois
+  /// [from] et [to] (inclus). Sert à repérer les doublons quand on crée une
+  /// dépense régulière à partir de dépenses déjà saisies une par une.
+  static Future<List<Expense>> similarExpenses({
+    required String category,
+    required String note,
+    required DateTime from,
+    required DateTime to,
+    int? excludeId,
+  }) async {
+    final db = await instance;
+    final first = _dateKey(DateTime(from.year, from.month));
+    final last = _dateKey(DateTime(to.year, to.month + 1, 0));
+    final rows = await db.query(
+      'expenses',
+      where: 'category = ? COLLATE NOCASE AND note = ? COLLATE NOCASE '
+          'AND date >= ? AND date <= ?'
+          '${excludeId == null ? '' : ' AND id != ?'}',
+      whereArgs: [category, note, first, last, if (excludeId != null) excludeId],
+      orderBy: 'date',
+    );
+    return rows.map(Expense.fromMap).toList();
+  }
+
   /// Renomme une catégorie (ou déplace ses dépenses vers une autre).
   static Future<void> renameCategory(String from, String to) async {
     final db = await instance;
     await db.update('expenses', {'category': to},
+        where: 'category = ?', whereArgs: [from]);
+    await db.update('recurring', {'category': to},
         where: 'category = ?', whereArgs: [from]);
   }
 }
@@ -664,9 +937,10 @@ class Db {
 class ParsedImport {
   final List<Expense> expenses;
   final List<Income> incomes;
+  final List<Recurring> recurring;
   final int invalid;
   const ParsedImport(this.expenses, this.invalid,
-      [this.incomes = const <Income>[]]);
+      [this.incomes = const <Income>[], this.recurring = const <Recurring>[]]);
 }
 
 String decodeBytes(Uint8List bytes) {
@@ -758,6 +1032,8 @@ ParsedImport parseImport(Uint8List bytes) {
   var noteIdx = 3;
   var natureIdx = -1;
   var monthIdx = -1;
+  var dayIdx = -1;
+  var endIdx = -1;
   var start = 0;
   if (dateIdx >= 0 && amountIdx >= 0) {
     start = 1;
@@ -766,6 +1042,8 @@ ParsedImport parseImport(Uint8List bytes) {
         ['note', 'libelle', 'description', 'commentaire', 'detail', 'label']);
     natureIdx = _findColumn(header, ['nature']);
     monthIdx = _findColumn(header, ['mois_budget']);
+    dayIdx = _findColumn(header, ['jour_regulier']);
+    endIdx = _findColumn(header, ['fin_regulier']);
   } else {
     dateIdx = 0;
     amountIdx = 1;
@@ -773,6 +1051,7 @@ ParsedImport parseImport(Uint8List bytes) {
 
   final out = <Expense>[];
   final incomes = <Income>[];
+  final recurring = <Recurring>[];
   var invalid = 0;
   for (var i = start; i < rows.length; i++) {
     final r = rows[i];
@@ -806,6 +1085,30 @@ ParsedImport parseImport(Uint8List bytes) {
       ));
       continue;
     }
+    // Dépense régulière : date = premier mois, jour_regulier = jour du mois,
+    // fin_regulier = dernier mois compté (vide si la série est en cours).
+    if (nature == 'regulier') {
+      final rcat = cell(catIdx);
+      var day = int.tryParse(cell(dayIdx)) ?? date.day;
+      if (day < 1) day = 1;
+      if (day > 31) day = 31;
+      DateTime? end;
+      final em = RegExp(r'^(\d{4})-(\d{1,2})$').firstMatch(cell(endIdx));
+      if (em != null) {
+        final y = int.parse(em.group(1)!);
+        final mo = int.parse(em.group(2)!);
+        if (mo >= 1 && mo <= 12) end = DateTime(y, mo);
+      }
+      recurring.add(Recurring(
+        amount: amount,
+        category: rcat.isEmpty ? tr('uncategorized') : rcat,
+        note: cell(noteIdx),
+        day: day,
+        start: DateTime(date.year, date.month),
+        end: end,
+      ));
+      continue;
+    }
     final cat = cell(catIdx);
     out.add(Expense(
       date: date,
@@ -814,26 +1117,27 @@ ParsedImport parseImport(Uint8List bytes) {
       note: cell(noteIdx),
     ));
   }
-  return ParsedImport(out, invalid, incomes);
+  return ParsedImport(out, invalid, incomes, recurring);
 }
 
 // ---------------------------------------------------------------------------
 // Export CSV et sauvegardes automatiques
 // ---------------------------------------------------------------------------
 
-String buildCsv(List<Expense> all, [List<Income> incomes = const []]) {
+String buildCsv(List<Expense> all,
+    [List<Income> incomes = const [], List<Recurring> recurring = const []]) {
   String q(String s) => (s.contains(';') || s.contains('"') || s.contains('\n'))
       ? '"${s.replaceAll('"', '""')}"'
       : s;
   final list = [...all]..sort((a, b) => a.date.compareTo(b.date));
-  final sb =
-      StringBuffer('\uFEFFdate;montant;categorie;note;nature;mois_budget\n');
+  final sb = StringBuffer(
+      '\uFEFFdate;montant;categorie;note;nature;mois_budget;jour_regulier;fin_regulier\n');
   for (final e in list) {
     sb.write('${_dateKey(e.date)};'
         '${e.amount.toStringAsFixed(2).replaceAll('.', ',')};'
         '${q(e.category)};'
         '${q(e.note)};'
-        'depense;\n');
+        'depense;;;\n');
   }
   final incs = [...incomes]..sort((a, b) => a.date.compareTo(b.date));
   for (final i in incs) {
@@ -842,7 +1146,20 @@ String buildCsv(List<Expense> all, [List<Income> incomes = const []]) {
         ';'
         '${q(i.note)};'
         '${i.isSalary ? 'salaire' : 'entree'};'
-        '${_monthKey(i.month)}\n');
+        '${_monthKey(i.month)};;\n');
+  }
+  // Séries de dépenses régulières (une ligne par série, pas par occurrence).
+  for (final r in recurring) {
+    final daysInMonth = DateTime(r.start.year, r.start.month + 1, 0).day;
+    final first =
+        DateTime(r.start.year, r.start.month, math.min(r.day, daysInMonth));
+    sb.write('${_dateKey(first)};'
+        '${r.amount.toStringAsFixed(2).replaceAll('.', ',')};'
+        '${q(r.category)};'
+        '${q(r.note)};'
+        'regulier;;'
+        '${r.day};'
+        '${r.end == null ? '' : _monthKey(r.end!)}\n');
   }
   return sb.toString();
 }
@@ -900,10 +1217,12 @@ class Backup {
   }
 
   static Future<BackupResult> run(List<Expense> all, List<Income> incomes,
-      {bool force = false}) async {
+      {List<Recurring> recurring = const [], bool force = false}) async {
     if (!Platform.isAndroid) return BackupResult.unsupported;
-    if (all.isEmpty && incomes.isEmpty) return BackupResult.empty;
-    final csv = buildCsv(all, incomes);
+    if (all.isEmpty && incomes.isEmpty && recurring.isEmpty) {
+      return BackupResult.empty;
+    }
+    final csv = buildCsv(all, incomes, recurring);
     final sig = _signature(csv);
     if (!force && sig == settings.lastBackupSig) return BackupResult.unchanged;
 
@@ -1609,8 +1928,15 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
+  // Dépenses enregistrées + occurrences des dépenses régulières jusqu'au mois
+  // courant (voir _reload). Les mois futurs n'ont donc aucune dépense régulière.
   List<Expense> _all = [];
+  List<Recurring> _recurring = [];
   List<Income> _incomes = [];
+
+  // Seulement les dépenses réellement enregistrées (sans les occurrences).
+  List<Expense> get _storedExpenses =>
+      _all.where((e) => e.recurringId == null).toList();
   bool _loading = true;
   int _tab = 0;
   DateTime _month = DateTime(DateTime.now().year, DateTime.now().month);
@@ -1654,10 +1980,14 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   // Au retour de l'écran d'autorisation d'Android : on relance la sauvegarde.
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed && _waitingAccess) {
+    if (state != AppLifecycleState.resumed) return;
+    if (_waitingAccess) {
       _waitingAccess = false;
       _autoBackup(force: true);
     }
+    // Un nouveau mois a peut-être commencé pendant que l'appli dormait : on
+    // régénère les dépenses régulières.
+    _reload();
   }
 
   Future<void> _askStorageAccess() async {
@@ -1699,7 +2029,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   Future<void> _autoBackup({bool force = false}) async {
-    final r = await Backup.run(_all, _incomes, force: force);
+    final r = await Backup.run(_storedExpenses, _incomes,
+        recurring: _recurring, force: force);
     if (!mounted) return;
     if (r == BackupResult.needsAccess) {
       await _askStorageAccess();
@@ -1748,9 +2079,22 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   Future<void> _reload() async {
     final data = await Db.all();
     final incomes = await Db.allIncomes();
+    final recs = await Db.allRecurring();
+    // Date système du téléphone : une dépense régulière n'apparaît qu'une
+    // fois son mois atteint (tout le mois courant, quel que soit le jour).
+    final today = DateTime.now();
+    final thisMonth = DateTime(today.year, today.month);
+    final merged = <Expense>[
+      ...data,
+      for (final r in recs) ...r.occurrences(thisMonth),
+    ]..sort((a, b) {
+        final c = b.date.compareTo(a.date);
+        return c != 0 ? c : (b.id ?? 0).compareTo(a.id ?? 0);
+      });
     if (!mounted) return;
     setState(() {
-      _all = data;
+      _all = merged;
+      _recurring = recs;
       _incomes = incomes;
       _loading = false;
     });
@@ -1826,11 +2170,16 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   Future<void> _openEditor([Expense? e]) async {
+    // Une occurrence de dépense régulière ouvre la série correspondante.
+    final rec = e?.recurringId == null
+        ? null
+        : _recurring.where((r) => r.id == e!.recurringId).firstOrNull;
     final saved = await Navigator.push<DateTime>(
       context,
       MaterialPageRoute(
         builder: (_) => EditPage(
           expense: e,
+          recurring: rec,
           categories: _categories,
           initialCategory:
               _all.isNotEmpty ? _all.first.category : _categories.first,
@@ -1995,7 +2344,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     final canon = <String, String>{
       for (final c in _categories) _norm(c): c,
     };
-    final existing = _all.map(_expenseKey).toSet();
+    final existing = _storedExpenses.map(_expenseKey).toSet();
     final toInsert = <Expense>[];
     var duplicates = 0;
     for (final e in parsed.expenses) {
@@ -2024,9 +2373,32 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       incToInsert.add(inc);
     }
     if (incToInsert.isNotEmpty) await Db.insertManyIncomes(incToInsert);
+    // Dépenses régulières du CSV (nature « regulier »), sans doublons.
+    final existingRec = _recurring.map(_recurringKey).toSet();
+    final recToInsert = <Recurring>[];
+    for (final r in parsed.recurring) {
+      final rcat = canon.putIfAbsent(_norm(r.category), () => _cap(r.category));
+      final x = Recurring(
+        amount: r.amount,
+        category: rcat,
+        note: r.note,
+        day: r.day,
+        start: r.start,
+        end: r.end,
+      );
+      if (!existingRec.add(_recurringKey(x))) {
+        duplicates++;
+        continue;
+      }
+      recToInsert.add(x);
+    }
+    if (recToInsert.isNotEmpty) await Db.insertManyRecurring(recToInsert);
     // Les catégories inconnues du CSV rejoignent la liste de l'utilisateur.
     final catsBefore = settings.categories.length;
-    await settings.addCategories(toInsert.map((e) => e.category));
+    await settings.addCategories([
+      ...toInsert.map((e) => e.category),
+      ...recToInsert.map((r) => r.category),
+    ]);
     final addedCats = settings.categories.length - catsBefore;
     await _reload();
     if (!mounted) return;
@@ -2038,6 +2410,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         content: Text([
           trn('imp_done', toInsert.length),
           if (incToInsert.isNotEmpty) trn('imp_inc', incToInsert.length),
+          if (recToInsert.isNotEmpty) trn('imp_rec', recToInsert.length),
           trn('imp_dup', duplicates),
           trn('imp_bad', parsed.invalid),
           if (addedCats > 0) trn('imp_cats', addedCats),
@@ -2053,11 +2426,12 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   Future<void> _export() async {
-    if (_all.isEmpty && _incomes.isEmpty) {
+    if (_all.isEmpty && _incomes.isEmpty && _recurring.isEmpty) {
       _snack(tr('none_to_export'));
       return;
     }
-    final bytes = Uint8List.fromList(utf8.encode(buildCsv(_all, _incomes)));
+    final bytes = Uint8List.fromList(
+        utf8.encode(buildCsv(_storedExpenses, _incomes, _recurring)));
     final name =
         'depenses_${DateFormat('yyyyMMdd').format(DateTime.now())}.csv';
     final path = await FilePicker.saveFile(
@@ -2317,15 +2691,30 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
     // Toutes les catégories de l'utilisateur, même sans dépense ce mois-ci.
     final cats = _categories;
+    // Montants par catégorie, séparés : dépenses ponctuelles (toutes les
+    // catégories, même à 0) puis dépenses régulières (seulement celles qui en
+    // ont). Chaque groupe est trié par montant décroissant.
     final byCat = <String, double>{for (final c in cats) c: 0.0};
+    final byCatRegular = <String, double>{};
     for (final e in items) {
-      byCat[e.category] = (byCat[e.category] ?? 0) + e.amount;
+      if (e.recurringId == null) {
+        byCat[e.category] = (byCat[e.category] ?? 0) + e.amount;
+      } else {
+        byCatRegular[e.category] = (byCatRegular[e.category] ?? 0) + e.amount;
+      }
     }
-    final entries = byCat.entries.toList()
-      ..sort((a, b) {
-        final c = b.value.compareTo(a.value);
-        return c != 0 ? c : cats.indexOf(a.key).compareTo(cats.indexOf(b.key));
-      });
+    int byAmount(MapEntry<String, double> a, MapEntry<String, double> b) {
+      final c = b.value.compareTo(a.value);
+      return c != 0 ? c : cats.indexOf(a.key).compareTo(cats.indexOf(b.key));
+    }
+
+    // Une catégorie sans dépense ponctuelle mais avec une dépense régulière
+    // n'apparaît que dans le groupe des régulières (pas de ligne à 0 en double).
+    final entries = byCat.entries
+        .where((e) => e.value != 0 || !byCatRegular.containsKey(e.key))
+        .toList()
+      ..sort(byAmount);
+    final regularEntries = byCatRegular.entries.toList()..sort(byAmount);
 
     // Filtre : on ignore une catégorie qui n'existe plus.
     final filter = (_filterCategory != null && cats.contains(_filterCategory))
@@ -2371,6 +2760,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         ),
         const SizedBox(height: 6),
         for (final entry in entries) _categoryRow(entry.key, entry.value, total),
+        if (regularEntries.isNotEmpty) ...[
+          _recurringDivider(),
+          for (final entry in regularEntries)
+            _categoryRow(entry.key, entry.value, total),
+        ],
         const SizedBox(height: 24),
         Row(
           children: [
@@ -2406,6 +2800,25 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           for (final i in monthIncomes) _incomeTile(i),
         for (final e in shown) _expenseTile(e),
       ],
+    );
+  }
+
+  // Séparation discrète avant les dépenses régulières.
+  Widget _recurringDivider() {
+    final cs = Theme.of(context).colorScheme;
+    final style =
+        Theme.of(context).textTheme.bodySmall?.copyWith(color: cs.onSurfaceVariant);
+    return Padding(
+      padding: const EdgeInsets.only(top: 14, bottom: 2),
+      child: Row(
+        children: [
+          Icon(Icons.repeat, size: 14, color: cs.onSurfaceVariant),
+          const SizedBox(width: 6),
+          Text(tr('recurring_expenses'), style: style),
+          const SizedBox(width: 8),
+          const Expanded(child: Divider(height: 1)),
+        ],
+      ),
     );
   }
 
@@ -2669,8 +3082,12 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   // Une dépense : touche pour modifier, glisse vers la gauche pour supprimer.
   Widget _expenseTile(Expense e) {
+    final regular = e.recurringId != null;
+    final month = DateTime(e.date.year, e.date.month);
+    String? choice; // réponse à la boîte de dialogue (dépense régulière)
     return Dismissible(
-      key: ValueKey(e.id),
+      key: ValueKey<Object?>(
+          regular ? 'rec-${e.recurringId}-${_monthKey(e.date)}' : e.id),
       direction: DismissDirection.endToStart,
       background: Container(
         color: Colors.red,
@@ -2678,7 +3095,23 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         padding: const EdgeInsets.only(right: 20),
         child: const Icon(Icons.delete, color: Colors.white),
       ),
+      // Une série touche plusieurs mois : on demande ce qu'on supprime.
+      confirmDismiss: regular
+          ? (_) async {
+              final r = _recurring
+                  .where((x) => x.id == e.recurringId)
+                  .firstOrNull;
+              if (r == null) return false;
+              choice = await askRecurringDelete(context, month,
+                  canStop: month != r.start);
+              return choice != null;
+            }
+          : null,
       onDismissed: (_) async {
+        if (regular) {
+          await _deleteRecurringFromList(e, choice ?? 'all');
+          return;
+        }
         setState(() => _all.removeWhere((x) => x.id == e.id));
         await Db.delete(e.id!);
         if (!mounted) return;
@@ -2702,7 +3135,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         ),
         title: Text(e.note.isEmpty ? e.category : e.note),
         subtitle: Text(
-          '${DateFormat('EEE d MMM', appLang).format(e.date)} · ${e.category}',
+          '${DateFormat('EEE d MMM', appLang).format(e.date)} · ${e.category}'
+          '${regular ? ' · ${tr('recurring_every_month')}' : ''}',
         ),
         trailing: Text(
           money.format(e.amount),
@@ -2711,6 +3145,35 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         onTap: () => _openEditor(e),
       ),
     );
+  }
+
+  // Suppression d'une dépense régulière depuis la liste (glisser), avec
+  // annulation possible.
+  Future<void> _deleteRecurringFromList(Expense e, String choice) async {
+    final r = _recurring.where((x) => x.id == e.recurringId).firstOrNull;
+    if (r == null) return;
+    final month = DateTime(e.date.year, e.date.month);
+    setState(() {
+      _all.removeWhere((x) =>
+          x.recurringId == r.id &&
+          (choice == 'all' || !x.date.isBefore(month)));
+    });
+    await Db.applyRecurringDelete(r, month, choice);
+    await _reload();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(SnackBar(
+        content: Text(
+            tr(choice == 'all' ? 'recurring_deleted' : 'recurring_stopped')),
+        action: SnackBarAction(
+          label: tr('undo'),
+          onPressed: () async {
+            await Db.restoreRecurring(r);
+            await _reload();
+          },
+        ),
+      ));
   }
 
   // ---- Interface : graphiques --------------------------------------------
@@ -3268,14 +3731,103 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 // Écran d'ajout / modification
 // ---------------------------------------------------------------------------
 
+/// Demande ce qu'on supprime d'une dépense régulière : 'stop' (arrêter à
+/// partir de [month], mois précédents conservés), 'all' (tous les mois), ou
+/// null si l'utilisateur annule. [canStop] est faux si [month] est le premier
+/// mois de la série (arrêter = tout supprimer).
+Future<String?> askRecurringDelete(BuildContext context, DateTime month,
+    {required bool canStop}) {
+  final small = Theme.of(context).textTheme.bodySmall;
+  return showDialog<String>(
+    context: context,
+    builder: (ctx) => SimpleDialog(
+      title: Text(tr('delete_recurring_title')),
+      children: [
+        if (canStop)
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(ctx, 'stop'),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(tr('stop_from', {'month': monthWord(month)})),
+                Text(tr('stop_from_sub'), style: small),
+              ],
+            ),
+          ),
+        SimpleDialogOption(
+          onPressed: () => Navigator.pop(ctx, 'all'),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(tr('delete_everywhere')),
+              if (canStop) Text(tr('delete_everywhere_sub'), style: small),
+            ],
+          ),
+        ),
+        SimpleDialogOption(
+          onPressed: () => Navigator.pop(ctx),
+          child: Text(tr('cancel')),
+        ),
+      ],
+    ),
+  );
+}
+
+/// Boîte de dialogue « doublons » : renvoie 'replace' (supprimer les dépenses
+/// déjà saisies), 'keep' (les garder, donc des doublons) ou null (annuler).
+Future<String?> askReplaceSimilar(
+    BuildContext context, List<Expense> similar, double amount, String name) {
+  const maxShown = 6;
+  final small = Theme.of(context).textTheme.bodySmall;
+  final fmt = DateFormat('d MMM yyyy', appLang);
+  return showDialog<String>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: Text(tr('similar_title')),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(trn('similar_body', similar.length, {'name': name})),
+            const SizedBox(height: 8),
+            for (final e in similar.take(maxShown))
+              Text('${fmt.format(e.date)} · ${money.format(e.amount)}'),
+            if (similar.length > maxShown) const Text('…'),
+            const SizedBox(height: 12),
+            Text(tr('similar_hint', {'amount': money.format(amount)}),
+                style: small),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx),
+          child: Text(tr('cancel')),
+        ),
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, 'keep'),
+          child: Text(tr('similar_keep')),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(ctx, 'replace'),
+          child: Text(tr('similar_replace')),
+        ),
+      ],
+    ),
+  );
+}
+
 class EditPage extends StatefulWidget {
   final Expense? expense;
+  final Recurring? recurring; // série éditée (dépense régulière)
   final List<String> categories;
   final String initialCategory;
 
   const EditPage({
     super.key,
     this.expense,
+    this.recurring,
     required this.categories,
     required this.initialCategory,
   });
@@ -3290,9 +3842,13 @@ class _EditPageState extends State<EditPage> {
   late final List<String> _cats;
   late DateTime _date;
   late String _category;
+  late bool _recurring;
+  late int _day;
+  bool _dayTouched = false;
   String? _error;
 
   bool get _editing => widget.expense != null;
+  bool get _isSeries => widget.recurring != null;
 
   @override
   void initState() {
@@ -3302,6 +3858,8 @@ class _EditPageState extends State<EditPage> {
     _date = e?.date ?? DateTime.now();
     _category = e?.category ?? widget.initialCategory;
     if (!_cats.contains(_category)) _cats.add(_category);
+    _recurring = _isSeries;
+    _day = widget.recurring?.day ?? _date.day;
     var amountText = '';
     if (e != null) {
       amountText = e.amount == e.amount.roundToDouble()
@@ -3327,7 +3885,12 @@ class _EditPageState extends State<EditPage> {
       firstDate: DateTime(2000),
       lastDate: DateTime(DateTime.now().year + 1, 12, 31),
     );
-    if (d != null) setState(() => _date = d);
+    if (d == null) return;
+    setState(() {
+      _date = d;
+      // Le jour du mois suit la date tant que l'utilisateur ne l'a pas choisi.
+      if (!_dayTouched) _day = d.day;
+    });
   }
 
   Future<void> _newCategory() async {
@@ -3351,24 +3914,98 @@ class _EditPageState extends State<EditPage> {
       setState(() => _error = tr('amount_invalid'));
       return;
     }
-    final e = Expense(
-      id: widget.expense?.id,
-      date: _date,
-      amount: amount,
-      category: _category,
-      note: _noteCtl.text.trim(),
-    );
+    final note = _noteCtl.text.trim();
     await settings.addCategory(_category); // sans effet si elle existe déjà
-    if (_editing) {
-      await Db.update(e);
+    var result = _date;
+    if (_isSeries) {
+      // Modification d'une série : appliquée au mois touché et aux suivants.
+      // Les mois précédents gardent leurs anciennes valeurs (la série est
+      // coupée en deux si ce n'est pas son premier mois).
+      final r = widget.recurring!;
+      final m = DateTime(_date.year, _date.month);
+      if (m == r.start) {
+        await Db.updateRecurring(r.copyWith(
+            amount: amount, category: _category, note: note, day: _day));
+      } else {
+        await Db.updateRecurring(r.copyWith(end: DateTime(m.year, m.month - 1)));
+        await Db.insertRecurring(Recurring(
+          amount: amount,
+          category: _category,
+          note: note,
+          day: _day,
+          start: m,
+          end: r.end,
+        ));
+      }
+    } else if (_recurring) {
+      final start = DateTime(_date.year, _date.month);
+      final now = DateTime.now();
+      final thisMonth = DateTime(now.year, now.month);
+      // Des dépenses identiques (même catégorie, même note) déjà saisies sur
+      // les mois couverts par la série feraient doublon : on demande quoi
+      // en faire avant d'écrire quoi que ce soit.
+      var similar = <Expense>[];
+      if (!start.isAfter(thisMonth)) {
+        similar = await Db.similarExpenses(
+          category: _category,
+          note: note,
+          from: start,
+          to: thisMonth,
+          excludeId: widget.expense?.id,
+        );
+      }
+      var replace = false;
+      if (similar.isNotEmpty) {
+        if (!mounted) return;
+        final choice = await askReplaceSimilar(
+            context, similar, amount, note.isEmpty ? _category : note);
+        if (choice == null) return;
+        replace = choice == 'replace';
+      }
+      await Db.insertRecurring(Recurring(
+        amount: amount,
+        category: _category,
+        note: note,
+        day: _day,
+        start: start,
+      ));
+      if (_editing) await Db.delete(widget.expense!.id!);
+      if (replace) {
+        await Db.deleteMany([for (final e in similar) e.id!]);
+      }
+      // Début dans un mois futur : rien ne s'affiche avant que ce mois soit
+      // atteint, on reste donc sur le mois courant.
+      if (start.isAfter(thisMonth)) result = now;
     } else {
-      await Db.insert(e);
+      final e = Expense(
+        id: widget.expense?.id,
+        date: _date,
+        amount: amount,
+        category: _category,
+        note: note,
+      );
+      if (_editing) {
+        await Db.update(e);
+      } else {
+        await Db.insert(e);
+      }
     }
     if (!mounted) return;
-    Navigator.pop(context, _date);
+    Navigator.pop(context, result);
   }
 
   Future<void> _delete() async {
+    if (_isSeries) {
+      final r = widget.recurring!;
+      final month = DateTime(_date.year, _date.month);
+      final choice =
+          await askRecurringDelete(context, month, canStop: month != r.start);
+      if (choice == null) return;
+      await Db.applyRecurringDelete(r, month, choice);
+      if (!mounted) return;
+      Navigator.pop(context, _date);
+      return;
+    }
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -3391,6 +4028,84 @@ class _EditPageState extends State<EditPage> {
     Navigator.pop(context, widget.expense!.date);
   }
 
+  // Bloc « Récurrence » : interrupteur, puis choix du jour du mois.
+  Widget _recurrenceBlock() {
+    final small = Theme.of(context).textTheme.bodySmall;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (_isSeries)
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.repeat),
+            title: Text(tr('recurring_switch')),
+            subtitle: Text(tr('recurring_switch_sub')),
+          )
+        else
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            secondary: const Icon(Icons.repeat),
+            title: Text(tr('recurring_switch')),
+            subtitle: Text(tr('recurring_switch_sub')),
+            value: _recurring,
+            onChanged: (v) => setState(() => _recurring = v),
+          ),
+        if (_recurring) ...[
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.event_repeat),
+            title: Text(tr('recurring_day')),
+            trailing: DropdownButton<int>(
+              value: _day,
+              underline: const SizedBox.shrink(),
+              items: [
+                for (var d = 1; d <= 31; d++)
+                  DropdownMenuItem(value: d, child: Text('$d')),
+              ],
+              onChanged: (v) {
+                if (v == null) return;
+                setState(() {
+                  _day = v;
+                  _dayTouched = true;
+                });
+              },
+            ),
+          ),
+          if (_day > 28)
+            Padding(
+              padding: const EdgeInsets.only(left: 40, bottom: 4),
+              child: Text(tr('recurring_short_month'), style: small),
+            ),
+        ],
+      ],
+    );
+  }
+
+  // Date : jour de la dépense ; pour une dépense régulière, premier mois
+  // (ou, en modification d'une série, rappel du mois à partir duquel la
+  // modification s'applique).
+  Widget _dateTile() {
+    final monthYear = DateFormat('MMMM yyyy', appLang).format(_date);
+    if (_isSeries) {
+      return ListTile(
+        contentPadding: EdgeInsets.zero,
+        leading: const Icon(Icons.info_outline),
+        title: Text(tr('recurring_edit_info', {'month': monthYear})),
+      );
+    }
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: Icon(_recurring ? Icons.event_repeat : Icons.calendar_today),
+      title: Text(
+        _recurring
+            ? tr('recurring_from', {'month': monthYear})
+            : toBeginningOfSentenceCase(
+                DateFormat('EEEE d MMMM yyyy', appLang).format(_date))!,
+      ),
+      onTap: _pickDate,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     Localizations.localeOf(context); // se reconstruit si la langue change
@@ -3408,6 +4123,7 @@ class _EditPageState extends State<EditPage> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          // 1. Montant
           TextField(
             controller: _amountCtl,
             autofocus: !_editing,
@@ -3424,6 +4140,7 @@ class _EditPageState extends State<EditPage> {
             },
           ),
           const SizedBox(height: 20),
+          // 2. Catégorie
           Text(tr('category'), style: Theme.of(context).textTheme.titleSmall),
           const SizedBox(height: 8),
           Wrap(
@@ -3443,23 +4160,21 @@ class _EditPageState extends State<EditPage> {
               ),
             ],
           ),
-          const SizedBox(height: 20),
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            leading: const Icon(Icons.calendar_today),
-            title: Text(
-              toBeginningOfSentenceCase(
-                  DateFormat('EEEE d MMMM yyyy', appLang).format(_date))!,
-            ),
-            onTap: _pickDate,
-          ),
+          const SizedBox(height: 12),
+          // 3. Récurrence
+          _recurrenceBlock(),
           const SizedBox(height: 8),
+          // 4. Enregistrer
           FilledButton.icon(
             onPressed: _save,
             icon: const Icon(Icons.check),
             label: Text(tr('save')),
           ),
           const SizedBox(height: 16),
+          // 5. Date
+          _dateTile(),
+          const SizedBox(height: 8),
+          // 6. Note
           TextField(
             controller: _noteCtl,
             textCapitalization: TextCapitalization.sentences,
