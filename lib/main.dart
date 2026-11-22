@@ -1268,23 +1268,26 @@ class Backup {
 // Réglages persistants (couleur, thème, verrouillage, sauvegarde)
 // ---------------------------------------------------------------------------
 
+// 12 teintes réparties sur le cercle chromatique (du jaune au jaune-vert,
+// dans le sens des aiguilles d'une montre), pour des choix bien distincts.
 const themeChoices = [
-  Color(0xFF009688),
-  Color(0xFF1E88E5),
-  Color(0xFF3949AB),
-  Color(0xFF8E24AA),
-  Color(0xFFD81B60),
-  Color(0xFFE53935),
-  Color(0xFFFB8C00),
-  Color(0xFFFFB300),
-  Color(0xFF43A047),
-  Color(0xFF546E7A),
-  Color(0xFF6D4C41),
+  Color(0xFFF2D500), // jaune
+  Color(0xFFF9A81A), // jaune-orangé
+  Color(0xFFEF7B1A), // orange
+  Color(0xFFD9411E), // rouge-orangé
+  Color(0xFFB71C1C), // rouge
+  Color(0xFFA3195B), // rouge-violet
+  Color(0xFF6A3FA0), // violet
+  Color(0xFF33307A), // bleu-violet
+  Color(0xFF1E73BE), // bleu
+  Color(0xFF0097A7), // bleu-vert
+  Color(0xFF3C9A3C), // vert
+  Color(0xFF9CC63A), // jaune-vert
 ];
 
 class AppSettings extends ChangeNotifier {
   SharedPreferences? _p;
-  Color seed = themeChoices.first;
+  Color seed = themeChoices[9]; // bleu-vert par défaut
   ThemeMode mode = ThemeMode.system;
   bool lockEnabled = false;
   bool autoBackup = true;
@@ -1542,6 +1545,7 @@ class _LockGateState extends State<LockGate> with WidgetsBindingObserver {
             if (showLock)
               Positioned.fill(
                 child: Scaffold(
+                  backgroundColor: Theme.of(context).colorScheme.surface,
                   body: Center(
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
@@ -1685,6 +1689,33 @@ Future<void> main() async {
   runApp(const DepensesApp());
 }
 
+/// Fond dégradé très discret, dérivé de la couleur choisie dans les Réglages
+/// et du thème (clair/sombre) : la teinte est fondue dans la couleur de
+/// surface, en haut un peu plus marquée, puis elle s'estompe vers le bas.
+class AppBackground extends StatelessWidget {
+  final Widget child;
+  const AppBackground({super.key, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final dark = cs.brightness == Brightness.dark;
+    final top = Color.alphaBlend(cs.primary.withAlpha(dark ? 70 : 60), cs.surface);
+    final bottom =
+        Color.alphaBlend(cs.primary.withAlpha(dark ? 16 : 14), cs.surface);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [top, bottom],
+        ),
+      ),
+      child: child,
+    );
+  }
+}
+
 class DepensesApp extends StatelessWidget {
   const DepensesApp({super.key});
 
@@ -1695,11 +1726,26 @@ class DepensesApp extends StatelessWidget {
       builder: (context, _) => MaterialApp(
         title: 'BankNote',
         debugShowCheckedModeBanner: false,
-        theme: ThemeData(colorSchemeSeed: settings.seed, useMaterial3: true),
+        theme: ThemeData(
+          colorSchemeSeed: settings.seed,
+          useMaterial3: true,
+          scaffoldBackgroundColor: Colors.transparent,
+          appBarTheme: const AppBarTheme(
+            backgroundColor: Colors.transparent,
+            surfaceTintColor: Colors.transparent,
+            scrolledUnderElevation: 0,
+          ),
+        ),
         darkTheme: ThemeData(
           colorSchemeSeed: settings.seed,
           brightness: Brightness.dark,
           useMaterial3: true,
+          scaffoldBackgroundColor: Colors.transparent,
+          appBarTheme: const AppBarTheme(
+            backgroundColor: Colors.transparent,
+            surfaceTintColor: Colors.transparent,
+            scrolledUnderElevation: 0,
+          ),
         ),
         themeMode: settings.mode,
         // La langue suit celle du téléphone (français, sinon anglais).
@@ -1854,7 +1900,8 @@ class _CategorySetupPageState extends State<CategorySetupPage> {
     Localizations.localeOf(context); // se reconstruit si la langue change
     final tt = Theme.of(context).textTheme;
     final cs = Theme.of(context).colorScheme;
-    return Scaffold(
+    return AppBackground(
+      child: Scaffold(
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.all(24),
@@ -1916,7 +1963,7 @@ class _CategorySetupPageState extends State<CategorySetupPage> {
           ],
         ),
       ),
-    );
+    ));
   }
 }
 
@@ -1927,7 +1974,8 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
+class _HomePageState extends State<HomePage>
+    with WidgetsBindingObserver, SingleTickerProviderStateMixin {
   // Dépenses enregistrées + occurrences des dépenses régulières jusqu'au mois
   // courant (voir _reload). Les mois futurs n'ont donc aucune dépense régulière.
   List<Expense> _all = [];
@@ -1974,7 +2022,67 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _barsCtl.dispose();
     super.dispose();
+  }
+
+  // ---- Barres masquables au défilement -------------------------------------
+  // Le bandeau du haut (titre, barre de mois, bannière salaire), les onglets
+  // du bas et le bouton « + Dépense » disparaissent quand on fait défiler la
+  // liste vers le bas, et réapparaissent après un défilement vers le haut.
+  // 1 = visibles, 0 = masqués.
+  late final AnimationController _barsCtl = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 220),
+    value: 1.0,
+  );
+  bool _barsShown = true;
+  double _scrollAcc = 0; // distance cumulée dans le sens de défilement actuel
+  static const double _hideAfter = 60; // px vers le bas avant de masquer
+  static const double _showAfter = 40; // px vers le haut avant de ré-afficher
+  // On ne masque que si la liste reste défilable une fois les barres parties
+  // (sinon on ne pourrait plus les faire revenir).
+  static const double _minScrollable = 260;
+
+  void _setBars(bool show) {
+    _scrollAcc = 0;
+    if (show == _barsShown) return;
+    _barsShown = show;
+    if (show) {
+      _barsCtl.forward();
+    } else {
+      _barsCtl.reverse();
+    }
+  }
+
+  bool _onScrollNotification(Notification n) {
+    // Onglet Réglages : les barres restent toujours visibles.
+    if (_tab == 3) return false;
+    if (n is ScrollMetricsNotification) {
+      // Contenu devenu trop court pour défiler : les barres doivent rester.
+      if (n.metrics.axis == Axis.vertical && n.metrics.maxScrollExtent <= 0) {
+        _setBars(true);
+      }
+      return false;
+    }
+    if (n is! ScrollUpdateNotification) return false;
+    final m = n.metrics;
+    if (n.depth != 0 || m.axis != Axis.vertical) return false;
+    // Tout en haut de la liste : barres visibles.
+    if (m.pixels <= 8) {
+      _setBars(true);
+      return false;
+    }
+    final d = n.scrollDelta ?? 0;
+    if (d == 0) return false;
+    if ((d > 0) != (_scrollAcc > 0)) _scrollAcc = 0; // changement de sens
+    _scrollAcc += d;
+    if (_scrollAcc > _hideAfter && m.maxScrollExtent > _minScrollable) {
+      _setBars(false);
+    } else if (_scrollAcc < -_showAfter) {
+      _setBars(true);
+    }
+    return false;
   }
 
   // Au retour de l'écran d'autorisation d'Android : on relance la sauvegarde.
@@ -3502,7 +3610,12 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             width: 3,
           ),
         ),
-        child: selected ? const Icon(Icons.check, color: Colors.white) : null,
+        child: selected
+            ? Icon(
+                Icons.check,
+                color: c.computeLuminance() > 0.5 ? Colors.black : Colors.white,
+              )
+            : null,
       ),
     );
   }
@@ -3676,30 +3789,115 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     } else if (_tab == 2) {
       body = _chartsPage();
     } else {
-      body = _tab == 0
-          ? Column(
-              children: [
-                _monthBar(),
-                _salaryBanner(),
-                Expanded(child: _summaryPage()),
-              ],
-            )
-          : _historyPage();
+      // (La barre de mois et la bannière salaire du Résumé sont dans la zone
+      // repliable du haut, voir plus bas.)
+      body = _tab == 0 ? _summaryPage() : _historyPage();
     }
 
-    return Scaffold(
-      appBar: AppBar(title: Text(titles[_tab])),
-      body: body,
+    // Zone du haut : titre de l'onglet, puis (Résumé) barre de mois et
+    // bannière salaire. Elle se replie au défilement.
+    final top = Material(
+      color: Colors.transparent,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            height: kToolbarHeight,
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Text(
+                  titles[_tab],
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+              ),
+            ),
+          ),
+          if (_tab == 0 && !_loading) ...[
+            _monthBar(),
+            _salaryBanner(),
+          ],
+        ],
+      ),
+    );
+
+    return AppBackground(
+      child: Scaffold(
+      body: SafeArea(
+        bottom: false,
+        child: Column(
+          children: [
+            AnimatedBuilder(
+              animation: _barsCtl,
+              child: top,
+              builder: (context, child) {
+                final v = _barsCtl.value;
+                return ClipRect(
+                  child: Align(
+                    alignment: Alignment.bottomCenter,
+                    heightFactor: v,
+                    child: Opacity(opacity: v, child: child),
+                  ),
+                );
+              },
+            ),
+            Expanded(
+              child: NotificationListener<Notification>(
+                onNotification: _onScrollNotification,
+                child: body,
+              ),
+            ),
+          ],
+        ),
+      ),
       floatingActionButton: _tab >= 2
           ? null
-          : FloatingActionButton.extended(
-              onPressed: () => _openEditor(),
-              icon: const Icon(Icons.add),
-              label: Text(tr('fab_expense')),
+          : ScaleTransition(
+              scale: _barsCtl,
+              child: FadeTransition(
+                opacity: _barsCtl,
+                child: FloatingActionButton.extended(
+                  onPressed: () => _openEditor(),
+                  icon: const Icon(Icons.add),
+                  label: Text(tr('fab_expense')),
+                ),
+              ),
             ),
-      bottomNavigationBar: NavigationBar(
+      bottomNavigationBar: AnimatedBuilder(
+        animation: _barsCtl,
+        child: _bottomNav(),
+        builder: (context, child) {
+          final v = _barsCtl.value;
+          final inset = MediaQuery.of(context).padding.bottom;
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ClipRect(
+                child: Align(
+                  alignment: Alignment.topCenter,
+                  heightFactor: v,
+                  child: child,
+                ),
+              ),
+              // Barre de gestes du système : on garde la place une fois les
+              // onglets masqués.
+              SizedBox(height: inset * (1 - v)),
+            ],
+          );
+        },
+      ),
+    ));
+  }
+
+  Widget _bottomNav() {
+    return NavigationBar(
+        backgroundColor: Colors.transparent,
         selectedIndex: _tab,
-        onDestinationSelected: (i) => setState(() => _tab = i),
+        onDestinationSelected: (i) {
+          _setBars(true);
+          setState(() => _tab = i);
+        },
         destinations: [
           NavigationDestination(
             icon: const Icon(Icons.dashboard_outlined),
@@ -3722,7 +3920,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             label: tr('tab_settings'),
           ),
         ],
-      ),
     );
   }
 }
@@ -4109,7 +4306,8 @@ class _EditPageState extends State<EditPage> {
   @override
   Widget build(BuildContext context) {
     Localizations.localeOf(context); // se reconstruit si la langue change
-    return Scaffold(
+    return AppBackground(
+      child: Scaffold(
       appBar: AppBar(
         title: Text(_editing ? tr('edit_expense') : tr('new_expense')),
         actions: [
@@ -4160,17 +4358,17 @@ class _EditPageState extends State<EditPage> {
               ),
             ],
           ),
-          const SizedBox(height: 12),
-          // 3. Récurrence
-          _recurrenceBlock(),
-          const SizedBox(height: 8),
-          // 4. Enregistrer
+          const SizedBox(height: 16),
+          // 3. Enregistrer
           FilledButton.icon(
             onPressed: _save,
             icon: const Icon(Icons.check),
             label: Text(tr('save')),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
+          // 4. Récurrence
+          _recurrenceBlock(),
+          const SizedBox(height: 8),
           // 5. Date
           _dateTile(),
           const SizedBox(height: 8),
@@ -4185,7 +4383,7 @@ class _EditPageState extends State<EditPage> {
           ),
         ],
       ),
-    );
+    ));
   }
 }
 
