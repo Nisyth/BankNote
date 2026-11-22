@@ -16,6 +16,7 @@ All your data stays **on your phone**: no account, no server, no internet connec
 
 * Quick entry of an expense: amount, category, date and an optional note.
 * Edit an expense by tapping it, delete it by swiping left (with the option to undo).
+* **Now with recurring expenses : A new "Recurring expense" switch lets you pick the day of the month it should count on**
 
 <p align="center">
   <img src="screenshots/2.png"
