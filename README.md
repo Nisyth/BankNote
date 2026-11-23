@@ -10,6 +10,13 @@ All your data stays **on your phone**: no account, no server, no internet connec
        width="250"
        alt="Welcome Screen" />
 
+
+
+<p align="center">
+  <img src="screenshots/2.png"
+       width="250"
+       alt="Expenses" />	   
+
 ## Features
 
 ### Recording expenses
@@ -19,7 +26,7 @@ All your data stays **on your phone**: no account, no server, no internet connec
 * **Now with recurring expenses : A new "Recurring expense" switch lets you pick the day of the month it should count on**
 
 <p align="center">
-  <img src="screenshots/2.png"
+  <img src="screenshots/3.png"
        width="250"
        alt="Add Expense" />
 
@@ -37,7 +44,7 @@ A  + Income button on the Summary card lets you add your monthly salary or one-o
 * No option is pre-selected, and the choice can be changed later by editing the entry.
 
 <p align="center">
-  <img src="screenshots/6.png"
+  <img src="screenshots/4.png"
        width="250"
        alt="Add Income" />
 
@@ -67,7 +74,7 @@ A  + Income button on the Summary card lets you add your monthly salary or one-o
 * Monthly average spending, by year and by category.
 
 <p align="center">
-  <img src="screenshots/3.png"
+  <img src="screenshots/5.png"
        width="250"
        alt="Graphs" />
 
@@ -101,7 +108,7 @@ The app follows the phone's language: **French** or **English** (English by defa
 2. Entering your categories.
 
 <p align="center">
-  <img src="screenshots/4.png"
+  <img src="screenshots/6.png"
        width="250"
        alt="Enter Categories" />
 	   
@@ -110,7 +117,7 @@ The app follows the phone's language: **French** or **English** (English by defa
 
 
 <p align="center">
-  <img src="screenshots/5.png"
+  <img src="screenshots/7.png"
        width="250"
        alt="Allow access to files" />
 	   
