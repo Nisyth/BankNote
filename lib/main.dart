@@ -265,6 +265,19 @@ const _tr = <String, List<String>>{
     'Y compris les mois précédents',
     'Including earlier months',
   ],
+  'stop_recurrence': ['Arrêter la récurrence', 'Stop recurrence'],
+  'stop_recurrence_sub': [
+    'Dernier mois compté : celui de cette dépense',
+    'Last counted month: the one of this expense',
+  ],
+  'stop_recurrence_title': ['Arrêter la récurrence ?', 'Stop recurrence?'],
+  'stop_recurrence_body': [
+    'Cette dépense sera comptée jusqu\'en {month} inclus, puis plus du tout. '
+        'Les mois passés sont conservés.',
+    'This expense will be counted up to and including {month}, then no '
+        'more. Past months are kept.',
+  ],
+  'stop_recurrence_action': ['Arrêter', 'Stop'],
   'recurring_deleted': [
     'Dépense régulière supprimée',
     'Recurring expense deleted',
@@ -467,6 +480,9 @@ String _dateKey(DateTime d) => DateFormat('yyyy-MM-dd').format(d);
 String _monthKey(DateTime d) => DateFormat('yyyy-MM').format(d);
 
 /// Nom du mois dans la langue de l'appli (en minuscules en français).
+/// Durée d'affichage du bandeau « Annuler » après une suppression.
+const undoDuration = Duration(seconds: 10);
+
 String monthWord(DateTime m) => DateFormat('MMMM', appLang).format(m);
 
 String _cap(String s) => s.isEmpty ? s : s[0].toUpperCase() + s.substring(1);
@@ -805,6 +821,17 @@ class Db {
     final db = await instance;
     await db.insert('recurring', r.toMap(),
         conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  /// Arrête la série : [lastMonth] est le dernier mois compté (inclus).
+  static Future<void> stopRecurring(Recurring r, DateTime lastMonth) async {
+    final db = await instance;
+    await db.update(
+      'recurring',
+      {'end_month': _monthKey(DateTime(lastMonth.year, lastMonth.month))},
+      where: 'id = ?',
+      whereArgs: [r.id],
+    );
   }
 
   /// choice = 'all' : la série disparaît de tous les mois.
@@ -3162,6 +3189,8 @@ class _HomePageState extends State<HomePage>
           ..clearSnackBars()
           ..showSnackBar(SnackBar(
             content: Text(tr('income_deleted')),
+            duration: undoDuration,
+            persist: false,
             action: SnackBarAction(
               label: tr('undo'),
               onPressed: () async {
@@ -3227,6 +3256,8 @@ class _HomePageState extends State<HomePage>
           ..clearSnackBars()
           ..showSnackBar(SnackBar(
             content: Text(tr('expense_deleted')),
+            duration: undoDuration,
+            persist: false,
             action: SnackBarAction(
               label: tr('undo'),
               onPressed: () async {
@@ -3274,6 +3305,8 @@ class _HomePageState extends State<HomePage>
       ..showSnackBar(SnackBar(
         content: Text(
             tr(choice == 'all' ? 'recurring_deleted' : 'recurring_stopped')),
+        duration: undoDuration,
+        persist: false,
         action: SnackBarAction(
           label: tr('undo'),
           onPressed: () async {
@@ -4191,6 +4224,33 @@ class _EditPageState extends State<EditPage> {
     Navigator.pop(context, result);
   }
 
+  Future<void> _stopRecurrence() async {
+    final r = widget.recurring!;
+    final month = DateTime(_date.year, _date.month);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(tr('stop_recurrence_title')),
+        content:
+            Text(tr('stop_recurrence_body', {'month': monthWord(month)})),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(tr('cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(tr('stop_recurrence_action')),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    await Db.stopRecurring(r, month);
+    if (!mounted) return;
+    Navigator.pop(context, _date);
+  }
+
   Future<void> _delete() async {
     if (_isSeries) {
       final r = widget.recurring!;
@@ -4246,6 +4306,17 @@ class _EditPageState extends State<EditPage> {
             subtitle: Text(tr('recurring_switch_sub')),
             value: _recurring,
             onChanged: (v) => setState(() => _recurring = v),
+          ),
+        if (_isSeries &&
+            (widget.recurring!.end == null ||
+                DateTime(_date.year, _date.month)
+                    .isBefore(widget.recurring!.end!)))
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.event_busy),
+            title: Text(tr('stop_recurrence')),
+            subtitle: Text(tr('stop_recurrence_sub')),
+            onTap: _stopRecurrence,
           ),
         if (_recurring) ...[
           ListTile(
