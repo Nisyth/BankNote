@@ -225,6 +225,7 @@ const _tr = <String, List<String>>{
   'last_backup': ['Dernière : {date}', 'Last: {date}'],
   'at': ['à', 'at'],
   'appearance': ['Apparence', 'Appearance'],
+  'currency': ['Devise', 'Currency'],
   'auto': ['Auto', 'Auto'],
   'light': ['Clair', 'Light'],
   'dark': ['Sombre', 'Dark'],
@@ -454,15 +455,44 @@ const monthInitials = [
 
 // Formats monétaires : recréés si la langue du téléphone change.
 String _fmtLang = '';
+String _fmtSymbol = '';
 NumberFormat? _money;
 NumberFormat? _moneyShort;
 
+/// Symbole de la devise choisie dans les Réglages (« € » ou « $»).
+String currencySymbol = '€';
+const currencyChoices = ['€', r'$'];
+
 void _ensureFormats() {
-  if (_money != null && _fmtLang == appLang) return;
+  if (_money != null && _fmtLang == appLang && _fmtSymbol == currencySymbol) {
+    return;
+  }
   _fmtLang = appLang;
-  _money = NumberFormat.currency(locale: appLang, symbol: '€');
-  _moneyShort =
-      NumberFormat.currency(locale: appLang, symbol: '€', decimalDigits: 0);
+  _fmtSymbol = currencySymbol;
+  _money = NumberFormat.currency(locale: appLang, symbol: currencySymbol);
+  _moneyShort = NumberFormat.currency(
+      locale: appLang, symbol: currencySymbol, decimalDigits: 0);
+}
+
+/// Porte la devise dans le thème : quand elle change, le thème change, ce
+/// qui reconstruit tous les écrans et rafraîchit les montants affichés.
+class CurrencyTheme extends ThemeExtension<CurrencyTheme> {
+  final String symbol;
+  const CurrencyTheme(this.symbol);
+
+  @override
+  CurrencyTheme copyWith({String? symbol}) => CurrencyTheme(symbol ?? this.symbol);
+
+  @override
+  CurrencyTheme lerp(ThemeExtension<CurrencyTheme>? other, double t) =>
+      other is CurrencyTheme && t >= 0.5 ? other : this;
+
+  @override
+  bool operator ==(Object other) =>
+      other is CurrencyTheme && other.symbol == symbol;
+
+  @override
+  int get hashCode => symbol.hashCode;
 }
 
 NumberFormat get money {
@@ -510,7 +540,7 @@ int _monthSpan(DateTime first, DateTime last) =>
     math.max(1, (last.year - first.year) * 12 + last.month - first.month + 1);
 
 double? parseAmount(String raw) {
-  var s = raw.trim().replaceAll(RegExp(r'[€\s\u00A0\u202F]'), '');
+  var s = raw.trim().replaceAll(RegExp(r'[€$\s\u00A0\u202F]'), '');
   if (s.isEmpty) return null;
   final lastComma = s.lastIndexOf(',');
   final lastDot = s.lastIndexOf('.');
@@ -1316,6 +1346,7 @@ class AppSettings extends ChangeNotifier {
   SharedPreferences? _p;
   Color seed = themeChoices[9]; // bleu-vert par défaut
   ThemeMode mode = ThemeMode.system;
+  String currency = '€';
   bool lockEnabled = false;
   bool autoBackup = true;
   DateTime? lastBackup;
@@ -1334,6 +1365,9 @@ class AppSettings extends ChangeNotifier {
     final s = prefs.getInt('seed');
     if (s != null) seed = Color(s);
     mode = ThemeMode.values[(prefs.getInt('mode') ?? 0).clamp(0, 2).toInt()];
+    final cur = prefs.getString('currency');
+    if (cur != null && currencyChoices.contains(cur)) currency = cur;
+    currencySymbol = currency;
     lockEnabled = prefs.getBool('lock') ?? false;
     dismissedBanners = prefs.getStringList('dismissedBanners') ?? [];
     autoBackup = prefs.getBool('autoBackup') ?? true;
@@ -1432,6 +1466,13 @@ class AppSettings extends ChangeNotifier {
     seed = c;
     notifyListeners();
     await _p?.setInt('seed', c.toARGB32());
+  }
+
+  Future<void> setCurrency(String c) async {
+    currency = c;
+    currencySymbol = c;
+    notifyListeners();
+    await _p?.setString('currency', c);
   }
 
   Future<void> setMode(ThemeMode m) async {
@@ -1756,6 +1797,7 @@ class DepensesApp extends StatelessWidget {
         theme: ThemeData(
           colorSchemeSeed: settings.seed,
           useMaterial3: true,
+          extensions: [CurrencyTheme(settings.currency)],
           scaffoldBackgroundColor: Colors.transparent,
           appBarTheme: const AppBarTheme(
             backgroundColor: Colors.transparent,
@@ -1767,6 +1809,7 @@ class DepensesApp extends StatelessWidget {
           colorSchemeSeed: settings.seed,
           brightness: Brightness.dark,
           useMaterial3: true,
+          extensions: [CurrencyTheme(settings.currency)],
           scaffoldBackgroundColor: Colors.transparent,
           appBarTheme: const AppBarTheme(
             backgroundColor: Colors.transparent,
@@ -3468,17 +3511,19 @@ class _HomePageState extends State<HomePage>
                   centerValue: moneyShort.format(total),
                 ),
               ),
-              const SizedBox(height: 12),
+              // Moyenne mensuelle : sous le camembert, au-dessus des catégories.
+              if (extra != null) ...[
+                const SizedBox(height: 20),
+                extra,
+                const SizedBox(height: 20),
+              ] else
+                const SizedBox(height: 12),
               _legend(entries, total, months),
               const SizedBox(height: 4),
               Text(
                 trn('avg_over', months),
                 style: textTheme.bodySmall,
               ),
-            ],
-            if (extra != null) ...[
-              const SizedBox(height: 24),
-              extra,
             ],
           ],
         ),
@@ -3717,6 +3762,19 @@ class _HomePageState extends State<HomePage>
                 ],
                 selected: {settings.mode},
                 onSelectionChanged: (s) => settings.setMode(s.first),
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.payments_outlined),
+              title: Text(tr('currency')),
+              trailing: SegmentedButton<String>(
+                showSelectedIcon: false,
+                segments: [
+                  for (final c in currencyChoices)
+                    ButtonSegment(value: c, label: Text(c)),
+                ],
+                selected: {settings.currency},
+                onSelectionChanged: (s) => settings.setCurrency(s.first),
               ),
             ),
             const Divider(),
@@ -4400,7 +4458,7 @@ class _EditPageState extends State<EditPage> {
             style: Theme.of(context).textTheme.headlineMedium,
             decoration: InputDecoration(
               labelText: tr('amount'),
-              suffixText: '€',
+              suffixText: currencySymbol,
               errorText: _error,
               border: const OutlineInputBorder(),
             ),
@@ -4674,7 +4732,7 @@ class _IncomeSheetState extends State<IncomeSheet> {
               style: tt.headlineSmall,
               decoration: InputDecoration(
                 labelText: tr('amount'),
-                suffixText: '€',
+                suffixText: currencySymbol,
                 errorText: _error,
                 border: const OutlineInputBorder(),
               ),
