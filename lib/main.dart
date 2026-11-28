@@ -10,9 +10,11 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 import 'package:local_auth/local_auth.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 // ---------------------------------------------------------------------------
 // Constantes et utilitaires
@@ -225,6 +227,24 @@ const _tr = <String, List<String>>{
   'last_backup': ['Dernière : {date}', 'Last: {date}'],
   'at': ['à', 'at'],
   'appearance': ['Apparence', 'Appearance'],
+  'about': ['À propos', 'About'],
+  'about_version': ['Version', 'Version'],
+  'about_credit': ['Vibecoded by Nisyth', 'Vibecoded by Nisyth'],
+  'about_source': ['Code source (GitHub)', 'Source code (GitHub)'],
+  'link_copied': ['Copié dans le presse-papiers', 'Copied to clipboard'],
+  'link_failed': ['Impossible d\'ouvrir le lien', 'Could not open the link'],
+  'about_licenses': ['Licences open source', 'Open source licenses'],
+  'about_license': ['Licence du projet', 'Project license'],
+  'about_contact': ['Contact', 'Contact'],
+  'about_donate': ['Soutenir le projet (Bitcoin)', 'Support the project (Bitcoin)'],
+  'about_donate_sub': ['Toucher pour copier l\'adresse', 'Tap to copy the address'],
+  'about_privacy_title': ['Confidentialité', 'Privacy'],
+  'about_privacy_body': [
+    'Vos données restent sur votre téléphone. BankNote ne collecte, '
+        'n\'envoie et ne partage aucune information.',
+    'Your data stays on your phone. BankNote does not collect, send or '
+        'share any information.',
+  ],
   'currency': ['Devise', 'Currency'],
   'auto': ['Auto', 'Auto'],
   'light': ['Clair', 'Light'],
@@ -365,6 +385,7 @@ const _tr = <String, List<String>>{
   ],
   'edit_expense': ['Modifier la dépense', 'Edit expense'],
   'new_expense': ['Nouvelle dépense', 'New expense'],
+  'category_required': ['Choisissez une catégorie', 'Choose a category'],
   'amount_invalid': ['Saisissez un montant valide', 'Enter a valid amount'],
   'amount': ['Montant', 'Amount'],
   'category': ['Catégorie', 'Category'],
@@ -2359,8 +2380,6 @@ class _HomePageState extends State<HomePage>
           expense: e,
           recurring: rec,
           categories: _categories,
-          initialCategory:
-              _all.isNotEmpty ? _all.first.category : _categories.first,
         ),
       ),
     );
@@ -3132,11 +3151,6 @@ class _HomePageState extends State<HomePage>
                   color: over ? tone : null,
                 ),
               ),
-              const SizedBox(height: 6),
-              Text(
-                tr('pct_spent', {'pct': pctStr(total / incomeTotal)}),
-                style: textTheme.bodyMedium,
-              ),
               const SizedBox(height: 12),
               // Reste du mois : à la place de l'ancienne ligne « Revenus · Dépenses ».
               Row(
@@ -3461,15 +3475,6 @@ class _HomePageState extends State<HomePage>
                     text: tr('per_month_suffix'), style: textTheme.bodyMedium),
               ],
             ),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            trn('year_summary', months, {
-                  'year': selectedYear,
-                  'total': moneyShort.format(total),
-                }) +
-                (selectedYear == now.year ? tr('incl_current') : ''),
-            style: textTheme.bodySmall,
           ),
         ],
       ],
@@ -3857,6 +3862,16 @@ class _HomePageState extends State<HomePage>
               subtitle: Text(tr('import_sub')),
               onTap: _import,
             ),
+            const Divider(),
+            ListTile(
+              leading: const Icon(Icons.info_outline),
+              title: Text(tr('about')),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const AboutPage()),
+              ),
+            ),
           ],
         );
       },
@@ -3892,19 +3907,20 @@ class _HomePageState extends State<HomePage>
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          SizedBox(
-            height: kToolbarHeight,
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Text(
-                  titles[_tab],
-                  style: Theme.of(context).textTheme.titleLarge,
+          if (_tab == 3)
+            SizedBox(
+              height: kToolbarHeight,
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Text(
+                    titles[_tab],
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
                 ),
               ),
             ),
-          ),
           if (_tab == 0 && !_loading) ...[
             _monthBar(),
             _salaryBanner(),
@@ -4106,18 +4122,137 @@ Future<String?> askReplaceSimilar(
   );
 }
 
+const appVersionFallback = '1.2.3'; // si la lecture de la version échoue
+const githubUrl = 'https://github.com/Nisyth/BankNote';
+const licenseName = 'MIT';
+const licenseUrl = '$githubUrl/blob/main/LICENSE';
+const contactEmail = 'delighted.walrus.xnic@mask.me';
+const donationAddress = 'bc1qpr2044vrd49tr59nxrtutvxxp0t3p5t402pv25';
+
+class AboutPage extends StatelessWidget {
+  const AboutPage({super.key});
+
+  void _toast(BuildContext context, String message) {
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _open(BuildContext context, Uri uri) async {
+    var ok = false;
+    try {
+      ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {}
+    if (!ok && context.mounted) _toast(context, tr('link_failed'));
+  }
+
+  Future<void> _copy(BuildContext context, String text) async {
+    await Clipboard.setData(ClipboardData(text: text));
+    if (context.mounted) _toast(context, tr('link_copied'));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    Localizations.localeOf(context);
+    final cs = Theme.of(context).colorScheme;
+    final tt = Theme.of(context).textTheme;
+    return AppBackground(
+      child: Scaffold(
+        appBar: AppBar(title: Text(tr('about'))),
+        body: FutureBuilder<PackageInfo>(
+          future: PackageInfo.fromPlatform(),
+          builder: (context, snap) {
+            final version = snap.data?.version ?? appVersionFallback;
+            return ListView(
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              children: [
+                Center(
+                  child: Column(
+                    children: [
+                      Icon(Icons.account_balance_wallet_outlined,
+                          size: 56, color: cs.primary),
+                      const SizedBox(height: 8),
+                      Text('BankNote',
+                          style: tt.headlineSmall
+                              ?.copyWith(fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 4),
+                      Text(tr('about_credit'), style: tt.bodyMedium),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                const Divider(),
+                ListTile(
+                  leading: const Icon(Icons.tag),
+                  title: Text(tr('about_version')),
+                  trailing: Text(version, style: tt.bodyLarge),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.lock_outline),
+                  title: Text(tr('about_privacy_title')),
+                  subtitle: Text(tr('about_privacy_body')),
+                ),
+                const Divider(),
+                ListTile(
+                  leading: const Icon(Icons.code),
+                  title: Text(tr('about_source')),
+                  subtitle: const Text(githubUrl),
+                  trailing: const Icon(Icons.open_in_new, size: 18),
+                  onTap: () => _open(context, Uri.parse(githubUrl)),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.mail_outline),
+                  title: Text(tr('about_contact')),
+                  subtitle: const Text(contactEmail),
+                  trailing: const Icon(Icons.open_in_new, size: 18),
+                  onTap: () => _open(
+                      context, Uri(scheme: 'mailto', path: contactEmail)),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.gavel),
+                  title: Text(tr('about_license')),
+                  subtitle: const Text(licenseName),
+                  trailing: const Icon(Icons.open_in_new, size: 18),
+                  onTap: () => _open(context, Uri.parse(licenseUrl)),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.description_outlined),
+                  title: Text(tr('about_licenses')),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => showLicensePage(
+                    context: context,
+                    applicationName: 'BankNote',
+                    applicationVersion: version,
+                  ),
+                ),
+                const Divider(),
+                ListTile(
+                  leading: const Icon(Icons.favorite_border),
+                  title: Text(tr('about_donate')),
+                  subtitle: Text('${tr('about_donate_sub')}\n$donationAddress'),
+                  isThreeLine: true,
+                  trailing: const Icon(Icons.copy, size: 18),
+                  onTap: () => _copy(context, donationAddress),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
 class EditPage extends StatefulWidget {
   final Expense? expense;
   final Recurring? recurring; // série éditée (dépense régulière)
   final List<String> categories;
-  final String initialCategory;
 
   const EditPage({
     super.key,
     this.expense,
     this.recurring,
     required this.categories,
-    required this.initialCategory,
   });
 
   @override
@@ -4129,7 +4264,8 @@ class _EditPageState extends State<EditPage> {
   late final TextEditingController _noteCtl;
   late final List<String> _cats;
   late DateTime _date;
-  late String _category;
+  String? _category; // null tant que rien n'est choisi (ajout)
+  String? _categoryError;
   late bool _recurring;
   late int _day;
   bool _dayTouched = false;
@@ -4144,8 +4280,9 @@ class _EditPageState extends State<EditPage> {
     final e = widget.expense;
     _cats = List.of(widget.categories);
     _date = e?.date ?? DateTime.now();
-    _category = e?.category ?? widget.initialCategory;
-    if (!_cats.contains(_category)) _cats.add(_category);
+    _category = e?.category;
+    final c0 = _category;
+    if (c0 != null && !_cats.contains(c0)) _cats.add(c0);
     _recurring = _isSeries;
     _day = widget.recurring?.day ?? _date.day;
     var amountText = '';
@@ -4193,6 +4330,7 @@ class _EditPageState extends State<EditPage> {
         _cats.add(name);
         _category = name;
       }
+      _categoryError = null;
     });
   }
 
@@ -4202,8 +4340,13 @@ class _EditPageState extends State<EditPage> {
       setState(() => _error = tr('amount_invalid'));
       return;
     }
+    final cat = _category;
+    if (cat == null) {
+      setState(() => _categoryError = tr('category_required'));
+      return;
+    }
     final note = _noteCtl.text.trim();
-    await settings.addCategory(_category); // sans effet si elle existe déjà
+    await settings.addCategory(cat); // sans effet si elle existe déjà
     var result = _date;
     if (_isSeries) {
       // Modification d'une série : appliquée au mois touché et aux suivants.
@@ -4213,12 +4356,12 @@ class _EditPageState extends State<EditPage> {
       final m = DateTime(_date.year, _date.month);
       if (m == r.start) {
         await Db.updateRecurring(r.copyWith(
-            amount: amount, category: _category, note: note, day: _day));
+            amount: amount, category: cat, note: note, day: _day));
       } else {
         await Db.updateRecurring(r.copyWith(end: DateTime(m.year, m.month - 1)));
         await Db.insertRecurring(Recurring(
           amount: amount,
-          category: _category,
+          category: cat,
           note: note,
           day: _day,
           start: m,
@@ -4235,7 +4378,7 @@ class _EditPageState extends State<EditPage> {
       var similar = <Expense>[];
       if (!start.isAfter(thisMonth)) {
         similar = await Db.similarExpenses(
-          category: _category,
+          category: cat,
           note: note,
           from: start,
           to: thisMonth,
@@ -4246,13 +4389,13 @@ class _EditPageState extends State<EditPage> {
       if (similar.isNotEmpty) {
         if (!mounted) return;
         final choice = await askReplaceSimilar(
-            context, similar, amount, note.isEmpty ? _category : note);
+            context, similar, amount, note.isEmpty ? cat : note);
         if (choice == null) return;
         replace = choice == 'replace';
       }
       await Db.insertRecurring(Recurring(
         amount: amount,
-        category: _category,
+        category: cat,
         note: note,
         day: _day,
         start: start,
@@ -4269,7 +4412,7 @@ class _EditPageState extends State<EditPage> {
         id: widget.expense?.id,
         date: _date,
         amount: amount,
-        category: _category,
+        category: cat,
         note: note,
       );
       if (_editing) {
@@ -4478,7 +4621,10 @@ class _EditPageState extends State<EditPage> {
                 ChoiceChip(
                   label: Text(c),
                   selected: c == _category,
-                  onSelected: (_) => setState(() => _category = c),
+                  onSelected: (_) => setState(() {
+                    _category = c;
+                    _categoryError = null;
+                  }),
                 ),
               ActionChip(
                 avatar: const Icon(Icons.add, size: 18),
@@ -4487,6 +4633,15 @@ class _EditPageState extends State<EditPage> {
               ),
             ],
           ),
+          if (_categoryError != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                _categoryError!,
+                style: TextStyle(
+                    color: Theme.of(context).colorScheme.error, fontSize: 12),
+              ),
+            ),
           const SizedBox(height: 16),
           // 3. Enregistrer
           FilledButton.icon(
